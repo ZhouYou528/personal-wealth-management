@@ -30,13 +30,9 @@ assetsRoutes.get("/search", async (c) => {
 
 assetsRoutes.post("/", async (c) => {
   const data = AssetCreate.parse(await c.req.json());
-  // Upsert behavior: if (symbol, asset_class) already exists, return it.
-  const existing = await findAssetBySymbol(c.env.DB, data.symbol, data.asset_class);
-  if (existing) return c.json(existing, 200);
-
-  const res = await dbRun(
+  await dbRun(
     c.env.DB,
-    `INSERT INTO assets
+    `INSERT OR IGNORE INTO assets
        (symbol, name, asset_class, currency, underlying, option_type, strike, expiry, multiplier)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -51,7 +47,7 @@ assetsRoutes.post("/", async (c) => {
       data.multiplier ?? null,
     ],
   );
-  const created = await getAsset(c.env.DB, Number(res.meta.last_row_id));
+  const created = await findAssetBySymbol(c.env.DB, data.symbol, data.asset_class);
   return c.json(created, 201);
 });
 
