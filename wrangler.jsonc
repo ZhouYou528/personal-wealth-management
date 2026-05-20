@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "personal-wealth-management",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pwm_db",
+      "database_id": "REPLACE_ME_AFTER_wrangler_d1_create"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "PRICE_CACHE",
+      "id": "REPLACE_ME_AFTER_wrangler_kv_create"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 5 * * *"]
+  },
+  "vars": {
+    "DEFAULT_CURRENCY": "USD"
+  }
+  // Secrets (set via `wrangler secret put <NAME>`):
+  //   FINNHUB_API_KEY        – https://finnhub.io (free)
+  //   COINGECKO_DEMO_API_KEY – https://www.coingecko.com/en/api/pricing (free demo plan)
+  //   ALPHAVANTAGE_API_KEY   – https://www.alphavantage.co/support/#api-key (free)
+}
