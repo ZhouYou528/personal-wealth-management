@@ -1,8 +1,9 @@
 // Domain types shared between the Cloudflare Worker (API) and the React client.
 
 export type AccountType =
+  | 'Brokerage' | 'Roth IRA' | 'Traditional IRA' | '401k' | 'HSA'
   | 'RRSP' | 'TFSA' | 'FHSA' | 'RESP'
-  | 'Margin' | 'Cash' | 'Crypto' | 'Non-registered'
+  | 'Crypto'
 
 export interface Account {
   id: string
@@ -22,12 +23,13 @@ export type TxType =
   | 'transfer'
   | 'dividend' | 'interest'
   | 'recurring'
+  | 'split'
 
 export type AssetKind = 'stock' | 'etf' | 'option' | 'crypto' | 'cash'
 
 export interface Transaction {
   id: string
-  date: string
+  tx_date: string
   account_id: string
   type: TxType
   symbol?: string
@@ -82,7 +84,7 @@ export interface Goal {
 
 export interface CalendarEvent {
   id: string
-  date: string
+  event_date: string
   symbol: string
   kind: 'dividend' | 'earnings' | 'expiry'
   amount?: number
@@ -90,7 +92,7 @@ export interface CalendarEvent {
 }
 
 export interface NavSnapshot {
-  date: string
+  snap_date: string
   account_id?: string
   value: number
 }

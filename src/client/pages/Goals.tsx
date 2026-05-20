@@ -32,7 +32,8 @@ function AddGoalModal({ open, onClose }: { open: boolean; onClose: () => void })
     <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-surface rounded-lg shadow-lg p-6 modal-pop">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md">
+          <div className="modal-pop bg-surface rounded-lg shadow-lg p-6">
           <Dialog.Title className="text-section-h2 text-text mb-4">New Goal</Dialog.Title>
 
           <div className="space-y-4">
@@ -97,6 +98,7 @@ function AddGoalModal({ open, onClose }: { open: boolean; onClose: () => void })
             >
               Create Goal
             </Button>
+          </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

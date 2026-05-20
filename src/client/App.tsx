@@ -10,6 +10,7 @@ import { Transactions } from './pages/Transactions'
 import { Watchlist } from './pages/Watchlist'
 import { Accounts } from './pages/Accounts'
 import { Goals } from './pages/Goals'
+import { Import } from './pages/Import'
 import { useStore } from './lib/store'
 
 const qc = new QueryClient({
@@ -43,6 +44,7 @@ function AppShell() {
           <Route path="watchlist" element={<Watchlist />} />
           <Route path="accounts" element={<Accounts />} />
           <Route path="goals" element={<Goals />} />
+          <Route path="import" element={<Import />} />
         </Route>
       </Routes>
       <AddTxModal />

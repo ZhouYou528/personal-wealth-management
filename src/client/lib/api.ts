@@ -11,8 +11,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText })) as { error: string }
-    throw new Error(err.error ?? res.statusText)
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error: unknown; message?: string }
+    let msg: string
+    if (typeof err.error === 'string') {
+      msg = err.error
+    } else if (err.error && typeof err.error === 'object' && 'issues' in err.error) {
+      // Zod validation error from hono/zod-validator
+      const issues = (err.error as { issues: { path: string[]; message: string }[] }).issues
+      msg = issues.map(i => `${i.path.join('.') || 'field'}: ${i.message}`).join(', ')
+    } else {
+      msg = res.statusText || 'Request failed'
+    }
+    throw new Error(msg)
   }
   return res.json() as Promise<T>
 }
@@ -29,7 +39,7 @@ export const accounts = {
 
 // ── Transactions ─────────────────────────────────────────────
 
-export interface TxListParams { accountId?: string; symbol?: string; limit?: number; offset?: number }
+export interface TxListParams { accountId?: string; symbol?: string; limit?: number; offset?: number; days?: number }
 
 export const transactions = {
   list:   (params: TxListParams = {}) => {
@@ -38,6 +48,7 @@ export const transactions = {
     if (params.symbol)    qs.set('symbol', params.symbol)
     if (params.limit)     qs.set('limit', String(params.limit))
     if (params.offset)    qs.set('offset', String(params.offset))
+    if (params.days)      qs.set('days', String(params.days))
     return request<Transaction[]>(`/transactions?${qs}`)
   },
   get:    (id: string)                                        => request<Transaction>(`/transactions/${id}`),
@@ -96,4 +107,9 @@ export const nav = {
     if (accountId) qs.set('accountId', accountId)
     return request<NavSnapshot[]>(`/nav?${qs}`)
   },
+  backfill: (accountId?: string) =>
+    request<{ ok: boolean; dates: number }>('/nav/backfill', {
+      method: 'POST',
+      body: JSON.stringify({ accountId }),
+    }),
 }

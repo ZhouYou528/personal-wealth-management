@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft } from 'lucide-react'
@@ -25,12 +26,19 @@ export function HoldingDetail() {
   const navigate = useNavigate()
   const { selectedAccountId, openAddTx } = useStore()
 
-  const { data: allHoldings = [] } = useQuery({
+  const { data: allHoldings = [], isLoading, isFetching } = useQuery({
     queryKey: ['holdings', selectedAccountId],
     queryFn: () => holdingsApi.list(selectedAccountId ?? undefined),
   })
 
   const holding = allHoldings.find(h => h.id === decodeURIComponent(id ?? ''))
+
+  // If the holding's gone (e.g. fully sold), bounce back to the list once the query has settled
+  useEffect(() => {
+    if (!isLoading && !isFetching && !holding) {
+      navigate('/holdings', { replace: true })
+    }
+  }, [isLoading, isFetching, holding, navigate])
 
   const { data: txs = [] } = useQuery({
     queryKey: ['transactions', holding?.symbol],
@@ -38,12 +46,13 @@ export function HoldingDetail() {
     enabled: !!holding?.symbol,
   })
 
+  if (isLoading) {
+    return <div className="p-8 text-text-3 text-small">Loading…</div>
+  }
+
   if (!holding) {
-    return (
-      <div className="p-8 text-text-3 text-small">
-        Holding not found. <button onClick={() => navigate('/holdings')} className="text-accent underline">Back to Holdings</button>
-      </div>
-    )
+    // Effect above is navigating away; render nothing to avoid a "not found" flash
+    return null
   }
 
   const value = holding.qty * holding.px * (holding.multiplier ?? 1)
@@ -142,7 +151,7 @@ export function HoldingDetail() {
                 <p className="tabular text-small font-medium text-text private-val">
                   {fmtMoney(Math.abs(tx.total))}
                 </p>
-                <p className="text-[11px] text-text-3">{fmtDate(tx.date)}</p>
+                <p className="text-[11px] text-text-3">{fmtDate(tx.tx_date)}</p>
               </div>
             </div>
           ))}

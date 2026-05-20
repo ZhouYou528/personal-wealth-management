@@ -36,15 +36,16 @@ export async function deleteAccount(db: D1Database, id: string): Promise<void> {
 
 export async function getTransactions(
   db: D1Database,
-  opts: { accountId?: string; symbol?: string; limit?: number; offset?: number } = {}
+  opts: { accountId?: string; symbol?: string; limit?: number; offset?: number; since?: string } = {}
 ): Promise<Transaction[]> {
   let sql = 'SELECT * FROM transactions WHERE 1=1'
   const binds: unknown[] = []
 
   if (opts.accountId) { sql += ' AND account_id = ?'; binds.push(opts.accountId) }
   if (opts.symbol)    { sql += ' AND symbol = ?';     binds.push(opts.symbol) }
+  if (opts.since)     { sql += ' AND tx_date >= ?';   binds.push(opts.since) }
 
-  sql += ' ORDER BY date DESC, created_at DESC'
+  sql += ' ORDER BY tx_date DESC, created_at DESC'
   sql += ` LIMIT ${opts.limit ?? 200} OFFSET ${opts.offset ?? 0}`
 
   const { results } = await db.prepare(sql).bind(...binds).all<Transaction>()
@@ -58,7 +59,7 @@ export async function getAllTransactionsForHoldings(
   let sql = 'SELECT * FROM transactions WHERE 1=1'
   const binds: unknown[] = []
   if (accountId) { sql += ' AND account_id = ?'; binds.push(accountId) }
-  sql += ' ORDER BY date ASC, created_at ASC'
+  sql += ' ORDER BY tx_date ASC, created_at ASC'
   const { results } = await db.prepare(sql).bind(...binds).all<Transaction>()
   return results
 }
@@ -70,11 +71,11 @@ export async function getTransaction(db: D1Database, id: string): Promise<Transa
 export async function insertTransaction(db: D1Database, t: Omit<Transaction, 'created_at'>): Promise<void> {
   await db.prepare(`
     INSERT INTO transactions
-      (id, date, account_id, type, symbol, kind, qty, price, total, note,
+      (id, tx_date, account_id, type, symbol, kind, qty, price, total, note,
        to_account, from_account, option_type, strike, expiry, underlying)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    t.id, t.date, t.account_id, t.type,
+    t.id, t.tx_date, t.account_id, t.type,
     t.symbol ?? null, t.kind ?? null,
     t.qty ?? null, t.price ?? null, t.total,
     t.note ?? null,
@@ -141,7 +142,7 @@ export async function deleteGoal(db: D1Database, id: string): Promise<void> {
 
 export async function getEvents(db: D1Database): Promise<CalendarEvent[]> {
   const { results } = await db.prepare(
-    'SELECT * FROM events WHERE date >= date("now") ORDER BY date ASC LIMIT 20'
+    'SELECT * FROM events WHERE event_date >= date("now") ORDER BY event_date ASC LIMIT 20'
   ).all<CalendarEvent>()
   return results
 }
@@ -155,14 +156,14 @@ export async function getNavSnapshots(
 ): Promise<NavSnapshot[]> {
   const id = accountId ?? ''
   const { results } = await db.prepare(
-    `SELECT * FROM nav_snapshots WHERE account_id = ? AND date >= date('now', '-${days} days') ORDER BY date ASC`
+    `SELECT * FROM nav_snapshots WHERE account_id = ? AND snap_date >= date('now', '-${days} days') ORDER BY snap_date ASC`
   ).bind(id).all<NavSnapshot>()
   return results
 }
 
 export async function upsertNavSnapshot(db: D1Database, snap: NavSnapshot): Promise<void> {
   await db.prepare(`
-    INSERT INTO nav_snapshots (date, account_id, value) VALUES (?, ?, ?)
-    ON CONFLICT(date, account_id) DO UPDATE SET value = excluded.value
-  `).bind(snap.date, snap.account_id ?? '', snap.value).run()
+    INSERT INTO nav_snapshots (snap_date, account_id, value) VALUES (?, ?, ?)
+    ON CONFLICT(snap_date, account_id) DO UPDATE SET value = excluded.value
+  `).bind(snap.snap_date, snap.account_id ?? '', snap.value).run()
 }

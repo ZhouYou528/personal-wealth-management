@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { accounts as accountsApi, transactions as txApi, market } from '@/lib/api'
+import { accounts as accountsApi, transactions as txApi, nav as navApi, market } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { Button } from './ui/button'
 import { todayISO } from '@/lib/utils'
@@ -13,7 +13,7 @@ interface TxConfig {
   sub: string
   color: string
   fields: ('account' | 'date' | 'symbol' | 'qty' | 'price' | 'total' | 'note' |
-           'fromAccount' | 'toAccount' | 'optionFields' | 'frequency')[]
+           'fromAccount' | 'toAccount' | 'optionFields' | 'frequency' | 'splitRatio')[]
   kind?: AssetKind
 }
 
@@ -30,21 +30,24 @@ const TX_TYPES: Record<TxType, TxConfig> = {
   dividend:     { label: 'Dividend',    sub: 'Income received', color: '#06B6D4', fields: ['account','date','symbol','total','note'] },
   interest:     { label: 'Interest',    sub: 'Bank / bond',     color: '#06B6D4', fields: ['account','date','total','note'], kind: 'cash' },
   recurring:    { label: 'Recurring',   sub: 'Auto-invest',     color: '#7C3AED', fields: ['account','date','total','frequency'] },
+  split:        { label: 'Stock Split', sub: 'Forward / reverse', color: '#7C3AED', fields: ['account','date','symbol','splitRatio','note'], kind: 'stock' },
 }
 
 const TYPE_GRID = [
   'buy','sell','buy_option','sell_option',
   'buy_crypto','sell_crypto','deposit','withdraw',
-  'transfer','dividend','interest','recurring',
+  'transfer','dividend','interest','split',
 ] as TxType[]
 
 export function AddTxModal() {
-  const { addTxOpen, addTxPrefill, closeAddTx } = useStore()
+  const { addTxOpen, addTxPrefill, editTx, closeAddTx } = useStore()
   const qc = useQueryClient()
+  const isEdit = editTx !== null
 
   const [step, setStep] = useState<'pick' | 'form'>('pick')
   const [type, setType] = useState<TxType>('buy')
   const [accountId, setAccountId] = useState('')
+  const [accountType, setAccountType] = useState('')
   const [fromAccountId, setFromAccountId] = useState('')
   const [toAccountId, setToAccountId] = useState('')
   const [date, setDate] = useState(todayISO())
@@ -56,24 +59,43 @@ export function AddTxModal() {
   const [optionType, setOptionType] = useState<'call' | 'put'>('call')
   const [strike, setStrike] = useState('')
   const [expiry, setExpiry] = useState('')
+  const [splitNew, setSplitNew] = useState('2')   // new shares (numerator)
+  const [splitOld, setSplitOld] = useState('1')   // old shares (denominator)
   const [symbolResults, setSymbolResults] = useState<{ symbol: string; name: string }[]>([])
 
   const { data: accs = [] } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list })
 
-  const mutation = useMutation({
+  function refreshAfterMutation(accountId: string | undefined) {
+    qc.invalidateQueries({ queryKey: ['transactions'] })
+    qc.invalidateQueries({ queryKey: ['transactions-dedup'] })
+    qc.invalidateQueries({ queryKey: ['holdings'] })
+    handleClose()
+    // Background: rebuild nav snapshots so the dashboard chart reflects the new/edited tx
+    navApi.backfill(accountId)
+      .then(() => qc.invalidateQueries({ queryKey: ['nav'] }))
+      .catch(() => {})
+  }
+
+  const createMutation = useMutation({
     mutationFn: txApi.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['holdings'] })
-      handleClose()
-    },
+    onSuccess: (tx) => refreshAfterMutation(tx.account_id),
   })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Parameters<typeof txApi.update>[1] }) =>
+      txApi.update(id, body),
+    onSuccess: (tx) => refreshAfterMutation(tx.account_id),
+  })
+
+  const mutation = isEdit ? updateMutation : createMutation
 
   function handleClose() {
     closeAddTx()
     setTimeout(() => {
       setStep('pick'); setSymbol(''); setQty(''); setPrice(''); setTotal(''); setNote('')
-      setStrike(''); setExpiry('')
+      setStrike(''); setExpiry(''); setDate(todayISO())
+      setFromAccountId(''); setToAccountId('')
+      setSplitNew('2'); setSplitOld('1')
     }, 200)
   }
 
@@ -82,14 +104,46 @@ export function AddTxModal() {
     setStep('form')
   }
 
-  // Apply prefill when modal opens
+  // Apply prefill / edit values when modal opens
   useEffect(() => {
     if (!addTxOpen) return
+
+    // Edit mode: prefill everything from the existing transaction
+    if (editTx) {
+      setStep('form')
+      setType(editTx.type as TxType)
+      setAccountId(editTx.account_id)
+      const acc = accs.find(a => a.id === editTx.account_id)
+      if (acc) setAccountType(acc.type)
+      setFromAccountId(editTx.from_account ?? '')
+      setToAccountId(editTx.to_account ?? '')
+      setDate(editTx.tx_date.slice(0, 10))
+      setSymbol(editTx.symbol ?? '')
+      setQty(editTx.qty != null ? String(editTx.qty) : '')
+      setPrice(editTx.price != null ? String(editTx.price) : '')
+      setTotal(String(editTx.total))
+      setNote(editTx.note ?? '')
+      if (editTx.option_type) setOptionType(editTx.option_type)
+      setStrike(editTx.strike != null ? String(editTx.strike) : '')
+      setExpiry(editTx.expiry ?? '')
+      if (editTx.type === 'split') {
+        setSplitNew(editTx.qty != null ? String(editTx.qty) : '2')
+        setSplitOld(editTx.price != null ? String(editTx.price) : '1')
+      }
+      return
+    }
+
     if (addTxPrefill?.type) { setType(addTxPrefill.type as TxType); setStep('form') }
     if (addTxPrefill?.symbol) setSymbol(addTxPrefill.symbol)
-    if (addTxPrefill?.accountId) setAccountId(addTxPrefill.accountId)
-    else if (accs.length > 0 && !accountId) setAccountId(accs[0].id)
-  }, [addTxOpen, addTxPrefill, accs])
+    if (addTxPrefill?.accountId) {
+      setAccountId(addTxPrefill.accountId)
+      const acc = accs.find(a => a.id === addTxPrefill.accountId)
+      if (acc) setAccountType(acc.type)
+    } else if (accs.length > 0 && !accountId) {
+      setAccountId(accs[0].id)
+      setAccountType(accs[0].type)
+    }
+  }, [addTxOpen, addTxPrefill, editTx, accs])
 
   // Auto-compute total for trades
   useEffect(() => {
@@ -110,41 +164,52 @@ export function AddTxModal() {
 
   function handleSubmit() {
     const cfg = TX_TYPES[type]
-    mutation.mutate({
-      date, type,
+    const isSplit = type === 'split'
+    const body = {
+      tx_date: date, type,
       account_id: accountId || accs[0]?.id,
       symbol: symbol || undefined,
       kind: cfg.kind,
-      qty: qty ? Number(qty) : undefined,
-      price: price ? Number(price) : undefined,
-      total: Number(total),
+      qty: isSplit ? Number(splitNew) : qty ? Number(qty) : undefined,
+      price: isSplit ? Number(splitOld) : price ? Number(price) : undefined,
+      total: isSplit ? 0 : Number(total),
       note: note || undefined,
       to_account: toAccountId || undefined,
       from_account: fromAccountId || undefined,
       option_type: (type === 'buy_option' || type === 'sell_option') ? optionType : undefined,
       strike: strike ? Number(strike) : undefined,
       expiry: expiry || undefined,
-    })
+    }
+    if (isEdit && editTx) {
+      updateMutation.mutate({ id: editTx.id, body })
+    } else {
+      createMutation.mutate(body)
+    }
   }
 
   const cfg = TX_TYPES[type]
   const fields = cfg.fields
 
+  const brokers = [...new Set(accs.map(a => a.institution))].sort()
+  const allTypes = [...new Set(accs.map(a => a.type))].sort()
+  const curInstitution = accs.find(a => a.id === accountId)?.institution ?? ''
+
   return (
     <Dialog.Root open={addTxOpen} onOpenChange={(o) => !o && handleClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl bg-surface rounded-lg shadow-lg modal-pop max-h-[90vh] overflow-y-auto">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl">
+          <div className="modal-pop bg-surface rounded-lg shadow-lg max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between p-5 border-b border-border">
             <Dialog.Title className="text-section-h2 text-text">
-              {step === 'pick' ? 'Add Transaction' : cfg.label}
+              {isEdit ? `Edit ${cfg.label}` : step === 'pick' ? 'Add Transaction' : cfg.label}
             </Dialog.Title>
             <button onClick={handleClose} className="text-text-3 hover:text-text">
               <X size={18} />
             </button>
           </div>
 
-          {step === 'pick' ? (
+          {step === 'pick' && !isEdit ? (
             <div className="p-5">
               <div className="grid grid-cols-4 gap-2">
                 {TYPE_GRID.map(t => {
@@ -172,18 +237,44 @@ export function AddTxModal() {
             </div>
           ) : (
             <div className="p-5 space-y-4">
-              {/* Back to picker */}
-              <button onClick={() => setStep('pick')} className="text-[12px] text-text-3 hover:text-text">
-                ← Choose type
-              </button>
+              {/* Back to picker — hidden in edit mode since type isn't changeable */}
+              {!isEdit && (
+                <button onClick={() => setStep('pick')} className="text-[12px] text-text-3 hover:text-text">
+                  ← Choose type
+                </button>
+              )}
 
               {fields.includes('account') && (
-                <Field label="Account">
-                  <select value={accountId} onChange={e => setAccountId(e.target.value)}
-                    className="field-input">
-                    {accs.map(a => <option key={a.id} value={a.id}>{a.name} · {a.institution}</option>)}
-                  </select>
-                </Field>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Broker">
+                    <select
+                      value={curInstitution}
+                      onChange={e => {
+                        const newBroker = e.target.value
+                        const match = accs.find(a => a.institution === newBroker && a.type === accountType)
+                          ?? accs.find(a => a.institution === newBroker)
+                        if (match) { setAccountId(match.id); setAccountType(match.type) }
+                      }}
+                      className="field-input"
+                    >
+                      {brokers.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Account Type">
+                    <select
+                      value={accountType}
+                      onChange={e => {
+                        const newType = e.target.value
+                        setAccountType(newType)
+                        const match = accs.find(a => a.institution === curInstitution && a.type === newType)
+                        if (match) setAccountId(match.id)
+                      }}
+                      className="field-input"
+                    >
+                      {allTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                </div>
               )}
 
               {fields.includes('fromAccount') && (
@@ -225,6 +316,34 @@ export function AddTxModal() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </Field>
+              )}
+
+              {fields.includes('splitRatio') && (
+                <Field label="Split Ratio">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="any"
+                      value={splitNew}
+                      onChange={e => setSplitNew(e.target.value)}
+                      className="field-input w-24 text-center"
+                      placeholder="2"
+                    />
+                    <span className="text-text-3 text-small">new for</span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={splitOld}
+                      onChange={e => setSplitOld(e.target.value)}
+                      className="field-input w-24 text-center"
+                      placeholder="1"
+                    />
+                    <span className="text-text-3 text-small">old</span>
+                    <span className="text-text-3 text-[11px] ml-2">
+                      e.g. 2 new for 1 old = 2:1 forward · 1 new for 10 old = 1:10 reverse
+                    </span>
                   </div>
                 </Field>
               )}
@@ -281,14 +400,20 @@ export function AddTxModal() {
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline" onClick={handleClose}>Cancel</Button>
                 <Button
-                  disabled={!total || mutation.isPending}
+                  disabled={
+                    mutation.isPending ||
+                    (type === 'split'
+                      ? !symbol || !Number(splitNew) || !Number(splitOld)
+                      : !total)
+                  }
                   onClick={handleSubmit}
                 >
-                  {mutation.isPending ? 'Saving…' : 'Add Transaction'}
+                  {mutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Transaction'}
                 </Button>
               </div>
             </div>
           )}
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

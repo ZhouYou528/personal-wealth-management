@@ -24,6 +24,7 @@ function kindFromTxType(tx: Transaction): AssetKind {
     case 'withdraw':
     case 'transfer':
     case 'interest': return 'cash'
+    case 'split': return 'stock'
     default: return 'stock'
   }
 }
@@ -40,8 +41,16 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
         const pos = map.get(key)
         if (pos) {
           const newQty = pos.qty + tx.qty
-          pos.cost = (pos.qty * pos.cost + tx.qty * tx.price) / newQty
-          pos.qty = newQty
+          if (newQty <= 1e-9) {
+            map.delete(key)
+          } else {
+            // only weighted-avg with the positive (long) portion; negative stub contributes 0 cost
+            const prevLong = Math.max(pos.qty, 0)
+            pos.cost = prevLong > 0
+              ? (prevLong * pos.cost + tx.qty * tx.price) / newQty
+              : tx.price
+            pos.qty = newQty
+          }
         } else {
           map.set(key, {
             account_id: tx.account_id,
@@ -62,6 +71,15 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
         if (pos) {
           pos.qty -= tx.qty
           if (pos.qty < 1e-9) map.delete(key)
+        } else {
+          // sell arrived before corresponding buy (same-day ordering); store as negative stub
+          map.set(key, {
+            account_id: tx.account_id,
+            symbol: tx.symbol,
+            kind: kindFromTxType(tx),
+            qty: -tx.qty,
+            cost: 0,
+          })
         }
         break
       }
@@ -131,6 +149,21 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
         break
       }
 
+      case 'split': {
+        // qty = new-share numerator, price = old-share denominator
+        // e.g. 2-for-1 → qty=2, price=1 (ratio=2); 1-for-10 reverse → qty=1, price=10 (ratio=0.1)
+        if (!tx.symbol || tx.qty == null || tx.price == null || tx.price === 0) break
+        const ratio = tx.qty / tx.price
+        if (ratio <= 0) break
+        const key = `${tx.account_id}:${tx.symbol}`
+        const pos = map.get(key)
+        if (pos) {
+          pos.qty  *= ratio
+          pos.cost /= ratio
+        }
+        break
+      }
+
       case 'transfer': {
         if (tx.from_account) {
           const fromKey = `${tx.from_account}:CASH`
@@ -161,7 +194,7 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
   }
 
   return Array.from(map.entries())
-    .filter(([, p]) => p.qty > 1e-9)
+    .filter(([, p]) => p.qty > 1e-4)
     .map(([key, p]) => ({
       id: key,
       account_id: p.account_id,

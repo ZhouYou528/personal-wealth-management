@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { holdings as holdingsApi } from '@/lib/api'
+import { holdings as holdingsApi, accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { Glyph } from '@/components/Glyph'
 import { KindBadge } from '@/components/ui/badge'
@@ -27,6 +27,9 @@ export function Holdings() {
     queryKey: ['holdings', selectedAccountId],
     queryFn: () => holdingsApi.list(selectedAccountId ?? undefined),
   })
+
+  const { data: accs = [] } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list })
+  const accMap = Object.fromEntries(accs.map(a => [a.id, a]))
 
   const filtered = filter === 'all' ? allHoldings : allHoldings.filter(h => h.kind === filter)
 
@@ -73,7 +76,7 @@ export function Holdings() {
           <table className="w-full text-small">
             <thead>
               <tr className="border-b border-border">
-                {['Asset', 'Qty', 'Price', 'Today %', 'Value', 'P&L', 'Alloc'].map(col => (
+                {['Asset', 'Account', 'Qty', 'Price', 'Today %', 'Value', 'P&L', 'Alloc'].map(col => (
                   <th key={col} className="text-left px-4 py-3 text-micro text-text-3 uppercase tracking-wider font-medium">
                     {col}
                   </th>
@@ -107,6 +110,19 @@ export function Holdings() {
                             <p className="text-[11px] text-text-3">{h.name}</p>
                           </div>
                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const acc = accMap[h.account_id]
+                          return acc ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: acc.color }} />
+                              <span className="text-[11px] text-text-2 whitespace-nowrap">{acc.institution}</span>
+                              <span className="text-[10px] text-text-3">·</span>
+                              <span className="text-[11px] text-text-3">{acc.type}</span>
+                            </div>
+                          ) : <span className="text-[11px] text-text-3">—</span>
+                        })()}
                       </td>
                       <td className="px-4 py-3 tabular text-text-2">{fmtQty(h.qty)}</td>
                       <td className="px-4 py-3 tabular text-text">{fmtMoney(h.px)}</td>

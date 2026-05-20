@@ -8,7 +8,8 @@ import * as q from '../db/queries'
 
 const AccountSchema = z.object({
   name:        z.string().min(1),
-  type:        z.enum(['RRSP','TFSA','FHSA','RESP','Margin','Cash','Crypto','Non-registered']),
+  type:        z.enum(['Brokerage','Roth IRA','Traditional IRA','401k','HSA',
+                       'RRSP','TFSA','FHSA','RESP','Crypto']),
   institution: z.string().default(''),
   color:       z.string().default('#10B981'),
   number:      z.string().default(''),

@@ -7,14 +7,14 @@ const uid = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10)
 import * as q from '../db/queries'
 
 const TxSchema = z.object({
-  date:         z.string(),
+  tx_date:      z.string(),
   account_id:   z.string(),
   type:         z.enum(['buy','sell','buy_option','sell_option','buy_crypto','sell_crypto',
-                        'deposit','withdraw','transfer','dividend','interest','recurring']),
+                        'deposit','withdraw','transfer','dividend','interest','recurring','split']),
   symbol:       z.string().optional(),
   kind:         z.enum(['stock','etf','option','crypto','cash']).optional(),
-  qty:          z.number().positive().optional(),
-  price:        z.number().positive().optional(),
+  qty:          z.number().nonnegative().optional(),
+  price:        z.number().nonnegative().optional(),
   total:        z.number(),
   note:         z.string().optional(),
   to_account:   z.string().optional(),
@@ -32,7 +32,9 @@ app.get('/', async (c) => {
   const symbol    = c.req.query('symbol')
   const limit     = Number(c.req.query('limit') ?? 200)
   const offset    = Number(c.req.query('offset') ?? 0)
-  const txs = await q.getTransactions(c.env.DB, { accountId, symbol, limit, offset })
+  const days      = c.req.query('days')
+  const since     = days ? new Date(Date.now() - Number(days) * 86400000).toISOString().slice(0, 10) : undefined
+  const txs = await q.getTransactions(c.env.DB, { accountId, symbol, limit, offset, since })
   return c.json(txs)
 })
 

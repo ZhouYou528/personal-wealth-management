@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { Transaction } from '@shared/types'
 
 interface UIStore {
   // Account filter — null = all accounts
@@ -22,10 +23,12 @@ interface UIStore {
   currency: string
   setCurrency: (c: string) => void
 
-  // Add-transaction modal
+  // Add/edit transaction modal
   addTxOpen: boolean
   addTxPrefill: { symbol?: string; accountId?: string; type?: string } | null
+  editTx: Transaction | null
   openAddTx: (prefill?: UIStore['addTxPrefill']) => void
+  openEditTx: (tx: Transaction) => void
   closeAddTx: () => void
 
   // Mobile nav drawer
@@ -60,8 +63,10 @@ export const useStore = create<UIStore>()(
 
       addTxOpen: false,
       addTxPrefill: null,
-      openAddTx: (prefill = null) => set({ addTxOpen: true, addTxPrefill: prefill }),
-      closeAddTx: () => set({ addTxOpen: false, addTxPrefill: null }),
+      editTx: null,
+      openAddTx: (prefill = null) => set({ addTxOpen: true, addTxPrefill: prefill, editTx: null }),
+      openEditTx: (tx) => set({ addTxOpen: true, addTxPrefill: null, editTx: tx }),
+      closeAddTx: () => set({ addTxOpen: false, addTxPrefill: null, editTx: null }),
 
       mobileNavOpen: false,
       setMobileNavOpen: (mobileNavOpen) => set({ mobileNavOpen }),

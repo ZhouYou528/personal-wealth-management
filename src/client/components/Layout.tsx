@@ -1,12 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
-  RefreshCw, Menu, X, Wallet, BookOpen,
+  RefreshCw, Menu, X, Wallet, BookOpen, Upload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
 import { Button } from './ui/button'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 
 const NAV_ITEMS = [
   { to: '/',             label: 'Dashboard',    icon: LayoutDashboard },
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { to: '/watchlist',    label: 'Watchlist',    icon: BookOpen },
   { to: '/accounts',     label: 'Accounts',     icon: Wallet },
   { to: '/goals',        label: 'Goals',        icon: Target },
+  { to: '/import',       label: 'Import',       icon: Upload },
 ]
 
 function NavItem({ to, label, icon: Icon }: (typeof NAV_ITEMS)[number]) {
@@ -73,6 +74,7 @@ function StatusDot() {
 export function Layout() {
   const { privacyMode, togglePrivacy, mobileNavOpen, setMobileNavOpen, openAddTx } = useStore()
   const qc = useQueryClient()
+  const isFetching = useIsFetching()
 
   return (
     <div className={cn('flex h-screen overflow-hidden', privacyMode && 'private')}>
@@ -113,7 +115,7 @@ export function Layout() {
               onClick={() => qc.invalidateQueries()}
               title="Refresh"
             >
-              <RefreshCw size={15} />
+              <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
             </Button>
 
             <Button

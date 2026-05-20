@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
@@ -10,7 +10,9 @@ import { Button } from '@/components/ui/button'
 import type { AccountType } from '@shared/types'
 
 const ACCOUNT_TYPES: AccountType[] = [
-  'RRSP', 'TFSA', 'FHSA', 'RESP', 'Margin', 'Cash', 'Crypto', 'Non-registered',
+  'Brokerage', 'Roth IRA', 'Traditional IRA', '401k', 'HSA',
+  'RRSP', 'TFSA', 'FHSA', 'RESP',
+  'Crypto',
 ]
 
 const ACCENT_COLORS = [
@@ -37,7 +39,8 @@ function AddAccountModal({ open, onClose }: { open: boolean; onClose: () => void
     <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-surface rounded-lg shadow-lg p-6 modal-pop">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md">
+          <div className="modal-pop bg-surface rounded-lg shadow-lg p-6">
           <Dialog.Title className="text-section-h2 text-text mb-4">Add Account</Dialog.Title>
 
           <div className="space-y-4">
@@ -104,6 +107,7 @@ function AddAccountModal({ open, onClose }: { open: boolean; onClose: () => void
               Add Account
             </Button>
           </div>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -112,11 +116,20 @@ function AddAccountModal({ open, onClose }: { open: boolean; onClose: () => void
 
 export function Accounts() {
   const { selectedAccountId, setSelectedAccountId } = useStore()
+  const qc = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
 
   const { data: accs = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: accountsApi.delete,
+    onSuccess: (_, id) => {
+      if (selectedAccountId === id) setSelectedAccountId(null)
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    },
   })
 
   return (
@@ -134,12 +147,24 @@ export function Accounts() {
           <div
             key={acc.id}
             onClick={() => setSelectedAccountId(selectedAccountId === acc.id ? null : acc.id)}
-            className={`bg-surface rounded-md border p-5 cursor-pointer transition-all ${
+            className={`group relative bg-surface rounded-md border p-5 cursor-pointer transition-all ${
               selectedAccountId === acc.id
                 ? 'border-accent shadow-md'
                 : 'border-border hover:border-border-strong'
             }`}
           >
+            <button
+              onClick={e => {
+                e.stopPropagation()
+                if (confirm(`Delete "${acc.name}"? This won't delete its transactions.`)) {
+                  deleteMutation.mutate(acc.id)
+                }
+              }}
+              className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:text-down text-text-3"
+            >
+              <Trash2 size={13} />
+            </button>
+
             <div className="flex items-center gap-3 mb-3">
               <AccountTypeBadge type={acc.type} color={acc.color} />
               <div>

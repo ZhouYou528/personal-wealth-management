@@ -33,7 +33,7 @@ export default {
     // All /api/* routes go to Hono
     if (url.pathname.startsWith('/api/')) {
       const stripped = new Request(
-        new URL(url.pathname.replace('/api', ''), request.url).toString(),
+        new URL(url.pathname.replace('/api', '') + url.search, request.url).toString(),
         request
       )
       return api.fetch(stripped, env, ctx)
@@ -72,6 +72,6 @@ export default {
     }
 
     const today = new Date().toISOString().split('T')[0]
-    await q.upsertNavSnapshot(env.DB, { date: today, value: totalValue })
+    await q.upsertNavSnapshot(env.DB, { snap_date: today, value: totalValue })
   },
 }
