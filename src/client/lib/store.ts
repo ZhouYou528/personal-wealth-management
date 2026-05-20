@@ -1,0 +1,79 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+
+interface UIStore {
+  // Account filter — null = all accounts
+  selectedAccountId: string | null
+  setSelectedAccountId: (id: string | null) => void
+
+  // Privacy mode
+  privacyMode: boolean
+  togglePrivacy: () => void
+
+  // Dark mode
+  darkMode: boolean
+  toggleDarkMode: () => void
+
+  // Accent colour
+  accent: 'emerald' | 'sapphire' | 'violet' | 'amber' | 'pink'
+  setAccent: (a: UIStore['accent']) => void
+
+  // Display currency
+  currency: string
+  setCurrency: (c: string) => void
+
+  // Add-transaction modal
+  addTxOpen: boolean
+  addTxPrefill: { symbol?: string; accountId?: string; type?: string } | null
+  openAddTx: (prefill?: UIStore['addTxPrefill']) => void
+  closeAddTx: () => void
+
+  // Mobile nav drawer
+  mobileNavOpen: boolean
+  setMobileNavOpen: (open: boolean) => void
+}
+
+export const useStore = create<UIStore>()(
+  persist(
+    (set) => ({
+      selectedAccountId: null,
+      setSelectedAccountId: (id) => set({ selectedAccountId: id }),
+
+      privacyMode: false,
+      togglePrivacy: () => set((s) => ({ privacyMode: !s.privacyMode })),
+
+      darkMode: false,
+      toggleDarkMode: () => set((s) => {
+        const next = !s.darkMode
+        document.documentElement.classList.toggle('dark', next)
+        return { darkMode: next }
+      }),
+
+      accent: 'emerald',
+      setAccent: (accent) => set(() => {
+        document.documentElement.dataset.accent = accent === 'emerald' ? '' : accent
+        return { accent }
+      }),
+
+      currency: 'USD',
+      setCurrency: (currency) => set({ currency }),
+
+      addTxOpen: false,
+      addTxPrefill: null,
+      openAddTx: (prefill = null) => set({ addTxOpen: true, addTxPrefill: prefill }),
+      closeAddTx: () => set({ addTxOpen: false, addTxPrefill: null }),
+
+      mobileNavOpen: false,
+      setMobileNavOpen: (mobileNavOpen) => set({ mobileNavOpen }),
+    }),
+    {
+      name: 'meridian-ui',
+      partialize: (s: UIStore) => ({
+        darkMode: s.darkMode,
+        accent: s.accent,
+        currency: s.currency,
+        privacyMode: s.privacyMode,
+      }),
+    }
+  )
+)

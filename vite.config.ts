@@ -1,20 +1,35 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import { cloudflare } from "@cloudflare/vite-plugin";
-import path from "node:path";
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
-// Vite + React SPA + Cloudflare Worker (Hono) running together.
-// In dev mode, `npm run dev` starts Vite which proxies /api/* through the Worker.
-// In prod, `npm run build` compiles the SPA into dist/client and bundles the Worker.
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src/client"),
-      "@shared": path.resolve(__dirname, "./src/shared"),
+      '@': path.resolve(__dirname, './src/client'),
+      '@shared': path.resolve(__dirname, './src/shared'),
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
     },
   },
   build: {
-    outDir: "dist/client",
+    outDir: 'dist',
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          charts: ['recharts'],
+          ui: ['@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-tabs'],
+        },
+      },
+    },
   },
-});
+})

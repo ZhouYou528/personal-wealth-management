@@ -1,113 +1,66 @@
-import { Hono } from "hono";
-import { TransactionCreate } from "@shared/schemas";
-import { dbAll, dbRun, getTransaction } from "../db/queries";
-import type { Env } from "../types";
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import type { Env } from '../types'
 
-export const transactionsRoutes = new Hono<{ Bindings: Env }>();
+const uid = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10)
+import * as q from '../db/queries'
 
-transactionsRoutes.get("/", async (c) => {
-  const account_id = c.req.query("account_id");
-  const asset_id = c.req.query("asset_id");
-  const type = c.req.query("type");
-  const from = c.req.query("from");
-  const to = c.req.query("to");
-  const limit = Math.min(Number(c.req.query("limit") ?? 200), 1000);
+const TxSchema = z.object({
+  date:         z.string(),
+  account_id:   z.string(),
+  type:         z.enum(['buy','sell','buy_option','sell_option','buy_crypto','sell_crypto',
+                        'deposit','withdraw','transfer','dividend','interest','recurring']),
+  symbol:       z.string().optional(),
+  kind:         z.enum(['stock','etf','option','crypto','cash']).optional(),
+  qty:          z.number().positive().optional(),
+  price:        z.number().positive().optional(),
+  total:        z.number(),
+  note:         z.string().optional(),
+  to_account:   z.string().optional(),
+  from_account: z.string().optional(),
+  option_type:  z.enum(['call','put']).optional(),
+  strike:       z.number().positive().optional(),
+  expiry:       z.string().optional(),
+  underlying:   z.string().optional(),
+})
 
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (account_id) {
-    where.push("account_id = ?");
-    params.push(Number(account_id));
-  }
-  if (asset_id) {
-    where.push("asset_id = ?");
-    params.push(Number(asset_id));
-  }
-  if (type) {
-    where.push("type = ?");
-    params.push(type);
-  }
-  if (from) {
-    where.push("trade_date >= ?");
-    params.push(from);
-  }
-  if (to) {
-    where.push("trade_date <= ?");
-    params.push(to);
-  }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  params.push(limit);
+const app = new Hono<{ Bindings: Env }>()
 
-  const rows = await dbAll(
-    c.env.DB,
-    `SELECT * FROM transactions ${whereSql}
-     ORDER BY trade_date DESC, id DESC
-     LIMIT ?`,
-    params,
-  );
-  return c.json(rows);
-});
+app.get('/', async (c) => {
+  const accountId = c.req.query('accountId')
+  const symbol    = c.req.query('symbol')
+  const limit     = Number(c.req.query('limit') ?? 200)
+  const offset    = Number(c.req.query('offset') ?? 0)
+  const txs = await q.getTransactions(c.env.DB, { accountId, symbol, limit, offset })
+  return c.json(txs)
+})
 
-transactionsRoutes.post("/", async (c) => {
-  const data = TransactionCreate.parse(await c.req.json());
-  const res = await dbRun(
-    c.env.DB,
-    `INSERT INTO transactions
-       (account_id, asset_id, type, trade_date, settle_date,
-        quantity, price, fee, amount, fx_rate, notes, external_ref)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      data.account_id,
-      data.asset_id ?? null,
-      data.type,
-      data.trade_date,
-      data.settle_date ?? null,
-      data.quantity ?? 0,
-      data.price ?? 0,
-      data.fee ?? 0,
-      data.amount,
-      data.fx_rate ?? null,
-      data.notes ?? null,
-      data.external_ref ?? null,
-    ],
-  );
-  const created = await getTransaction(c.env.DB, Number(res.meta.last_row_id));
-  return c.json(created, 201);
-});
+app.get('/:id', async (c) => {
+  const tx = await q.getTransaction(c.env.DB, c.req.param('id'))
+  if (!tx) return c.json({ error: 'Not found' }, 404)
+  return c.json(tx)
+})
 
-transactionsRoutes.patch("/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  const existing = await getTransaction(c.env.DB, id);
-  if (!existing) return c.json({ error: "Not found" }, 404);
-  const patch = TransactionCreate.partial().parse(await c.req.json());
-  const merged = { ...existing, ...patch };
-  await dbRun(
-    c.env.DB,
-    `UPDATE transactions SET
-      account_id = ?, asset_id = ?, type = ?, trade_date = ?, settle_date = ?,
-      quantity = ?, price = ?, fee = ?, amount = ?, fx_rate = ?, notes = ?, external_ref = ?
-     WHERE id = ?`,
-    [
-      merged.account_id,
-      merged.asset_id ?? null,
-      merged.type,
-      merged.trade_date,
-      merged.settle_date ?? null,
-      merged.quantity ?? 0,
-      merged.price ?? 0,
-      merged.fee ?? 0,
-      merged.amount,
-      merged.fx_rate ?? null,
-      merged.notes ?? null,
-      merged.external_ref ?? null,
-      id,
-    ],
-  );
-  return c.json(await getTransaction(c.env.DB, id));
-});
+app.post('/', zValidator('json', TxSchema), async (c) => {
+  const body = c.req.valid('json')
+  const tx = { ...body, id: `tx_${uid()}` }
+  await q.insertTransaction(c.env.DB, tx)
+  return c.json(tx, 201)
+})
 
-transactionsRoutes.delete("/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  await dbRun(c.env.DB, "DELETE FROM transactions WHERE id = ?", [id]);
-  return c.body(null, 204);
-});
+app.patch('/:id', zValidator('json', TxSchema.partial()), async (c) => {
+  const id = c.req.param('id')
+  const existing = await q.getTransaction(c.env.DB, id)
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  const body = c.req.valid('json')
+  await q.updateTransaction(c.env.DB, id, body)
+  return c.json({ ...existing, ...body })
+})
+
+app.delete('/:id', async (c) => {
+  await q.deleteTransaction(c.env.DB, c.req.param('id'))
+  return c.json({ ok: true })
+})
+
+export default app

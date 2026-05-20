@@ -1,262 +1,202 @@
-import { useMemo } from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-} from "recharts";
-import { api } from "../lib/api";
-import { useApi } from "../lib/useApi";
-import { formatCurrency, formatPercent, plClass, cn } from "../lib/utils";
+import { useQuery } from '@tanstack/react-query'
+import { holdings as holdingsApi, nav as navApi, transactions as txApi } from '@/lib/api'
+import { useStore } from '@/lib/store'
+import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+import { ChangePill } from '@/components/ChangePill'
+import { Glyph } from '@/components/Glyph'
+import { fmtMoney, fmtDate } from '@/lib/utils'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import type { Holding, NavSnapshot, Transaction } from '@shared/types'
 
-const COLORS = [
-  "#6366f1",
-  "#22c55e",
-  "#f59e0b",
-  "#ef4444",
-  "#06b6d4",
-  "#a855f7",
-  "#94a3b8",
-];
+function NetWorthHero({ holdings }: { holdings: Holding[] }) {
+  const netWorth = holdings.reduce((sum, h) => {
+    const mult = h.multiplier ?? 1
+    return sum + h.qty * h.px * mult
+  }, 0)
+
+  const costBasis = holdings.reduce((sum, h) => {
+    const mult = h.multiplier ?? 1
+    return sum + h.qty * h.cost * mult
+  }, 0)
+
+  const totalPnl = netWorth - costBasis
+  const totalPnlPct = costBasis > 0 ? (totalPnl / costBasis) * 100 : 0
+
+  return (
+    <div className="mb-4">
+      <p className="text-micro text-text-3 uppercase tracking-widest mb-1">Total Net Worth</p>
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <span className="tabular font-semibold text-[48px] leading-none tracking-tight text-text private-val">
+          {fmtMoney(netWorth)}
+        </span>
+        <ChangePill pct={totalPnlPct} abs={totalPnl} />
+      </div>
+    </div>
+  )
+}
+
+function NavChart({ data }: { data: NavSnapshot[] }) {
+  if (data.length < 2) {
+    return (
+      <div className="h-[260px] flex items-center justify-center text-text-3 text-small">
+        No history yet — check back after the first nightly snapshot.
+      </div>
+    )
+  }
+
+  const chartData = data.map((d) => ({
+    date: d.date,
+    value: d.value,
+  }))
+
+  return (
+    <div className="h-[260px] private-val">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+          <defs>
+            <linearGradient id="navGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#10B981" stopOpacity={0.15} />
+              <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tick={{ fontSize: 11, fill: 'var(--text-3, #A8A29E)' }}
+            tickFormatter={(v: string) => v.slice(5)}
+            interval="preserveStartEnd"
+          />
+          <YAxis hide domain={['auto', 'auto']} />
+          <Tooltip
+            contentStyle={{
+              background: 'hsl(var(--surface))',
+              border: '1px solid hsl(var(--border))',
+              borderRadius: 10,
+              fontSize: 12,
+            }}
+            formatter={(v: number) => [fmtMoney(v), 'Net worth']}
+            labelFormatter={(label: string) => fmtDate(label)}
+          />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="#10B981"
+            strokeWidth={2}
+            fill="url(#navGradient)"
+            dot={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function AllocationDonut({ holdings }: { holdings: Holding[] }) {
+  const kindTotals: Record<string, number> = {}
+  for (const h of holdings) {
+    const val = h.qty * h.px * (h.multiplier ?? 1)
+    kindTotals[h.kind] = (kindTotals[h.kind] ?? 0) + val
+  }
+  const total = Object.values(kindTotals).reduce((a, b) => a + b, 0)
+  const KIND_COLOR: Record<string, string> = {
+    stock: '#10B981', etf: '#06B6D4', option: '#F59E0B', crypto: '#F97316', cash: '#A1A1AA',
+  }
+
+  return (
+    <div className="space-y-2">
+      {Object.entries(kindTotals)
+        .sort(([, a], [, b]) => b - a)
+        .map(([kind, val]) => {
+          const pct = total > 0 ? (val / total) * 100 : 0
+          return (
+            <div key={kind} className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: KIND_COLOR[kind] }} />
+              <span className="text-small text-text-2 capitalize flex-1">{kind}</span>
+              <span className="tabular text-small text-text-3">{pct.toFixed(1)}%</span>
+              <span className="tabular text-small text-text font-medium private-val w-24 text-right">
+                {fmtMoney(val)}
+              </span>
+            </div>
+          )
+        })}
+    </div>
+  )
+}
+
+function RecentActivity({ transactions }: { transactions: Transaction[] }) {
+  const TX_LABELS: Record<string, string> = {
+    buy: 'Bought', sell: 'Sold', buy_crypto: 'Bought', sell_crypto: 'Sold',
+    deposit: 'Deposited', withdraw: 'Withdrew', transfer: 'Transferred',
+    dividend: 'Dividend', interest: 'Interest', buy_option: 'Bought Option',
+    sell_option: 'Sold Option', recurring: 'Recurring',
+  }
+
+  return (
+    <div className="space-y-1">
+      {transactions.slice(0, 5).map((tx) => (
+        <div key={tx.id} className="flex items-center gap-2 py-1.5">
+          {tx.symbol && (
+            <Glyph symbol={tx.symbol} kind={tx.kind ?? 'stock'} size="sm" />
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-small text-text truncate">
+              {TX_LABELS[tx.type] ?? tx.type}{tx.symbol ? ` ${tx.symbol}` : ''}
+            </p>
+            <p className="text-[11px] text-text-3">{fmtDate(tx.date)}</p>
+          </div>
+          <span className={`tabular text-small font-medium private-val ${tx.total >= 0 ? 'text-text' : 'text-down'}`}>
+            {tx.total < 0 ? '-' : ''}{fmtMoney(Math.abs(tx.total))}
+          </span>
+        </div>
+      ))}
+      {transactions.length === 0 && (
+        <p className="text-small text-text-3 py-4 text-center">No transactions yet</p>
+      )}
+    </div>
+  )
+}
 
 export function Dashboard() {
-  const netWorth = useApi(() => api.getNetWorth(), []);
-  const positions = useApi(() => api.getPositions(), []);
-  const navHistory = useApi(() => api.getNavHistory("3M"), []);
+  const { selectedAccountId } = useStore()
 
-  const positionPieData = useMemo(() => {
-    if (!positions.data) return [];
-    return positions.data
-      .filter((p) => p.market_value && p.market_value > 0)
-      .map((p) => ({ name: p.symbol, value: p.market_value! }));
-  }, [positions.data]);
+  const { data: holdingsData = [] } = useQuery({
+    queryKey: ['holdings', selectedAccountId],
+    queryFn: () => holdingsApi.list(selectedAccountId ?? undefined),
+  })
 
-  const classPieData = useMemo(() => {
-    if (!netWorth.data) return [];
-    return Object.entries(netWorth.data.by_class).map(([name, value]) => ({
-      name,
-      value,
-    }));
-  }, [netWorth.data]);
+  const { data: navData = [] } = useQuery({
+    queryKey: ['nav', selectedAccountId],
+    queryFn: () => navApi.history(365, selectedAccountId ?? undefined),
+  })
 
-  const topMovers = useMemo(() => {
-    if (!positions.data) return [];
-    return [...positions.data]
-      .filter((p) => p.unrealized_pl !== null)
-      .sort(
-        (a, b) =>
-          Math.abs(b.unrealized_pl_pct ?? 0) -
-          Math.abs(a.unrealized_pl_pct ?? 0),
-      )
-      .slice(0, 5);
-  }, [positions.data]);
+  const { data: recentTxs = [] } = useQuery({
+    queryKey: ['transactions', selectedAccountId, 'recent'],
+    queryFn: () => txApi.list({ accountId: selectedAccountId ?? undefined, limit: 10 }),
+  })
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <button
-          onClick={async () => {
-            await api.refreshPrices();
-            netWorth.reload();
-            positions.reload();
-          }}
-          className="text-sm rounded-md border border-border px-3 py-1.5 hover:bg-border/40"
-        >
-          Refresh prices
-        </button>
-      </div>
+    <div className="p-8 space-y-4 max-w-7xl mx-auto">
+      {/* Hero */}
+      <Card padding="hero">
+        <NetWorthHero holdings={holdingsData} />
+        <NavChart data={navData} />
+      </Card>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Tile
-          label="Total net worth"
-          value={
-            netWorth.data ? formatCurrency(netWorth.data.total) : "Loading…"
-          }
-        />
-        <Tile label="Positions" value={String(positions.data?.length ?? "—")} />
-        <Tile
-          label="As of"
-          value={
-            netWorth.data
-              ? new Date(netWorth.data.as_of).toLocaleString()
-              : "—"
-          }
-        />
-        <Tile
-          label="Stale prices"
-          value={String(netWorth.data?.stale_assets.length ?? 0)}
-          tone={
-            netWorth.data && netWorth.data.stale_assets.length > 0
-              ? "warn"
-              : undefined
-          }
-        />
-      </div>
-
+      {/* Row 2: Allocation + Holdings breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card title="Composition by asset class">
-          <ChartHeight>
-            {classPieData.length === 0 ? (
-              <Empty />
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={classPieData}
-                    dataKey="value"
-                    nameKey="name"
-                    outerRadius="80%"
-                    label={(entry) => entry.name}
-                  >
-                    {classPieData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(v: number) => formatCurrency(v)}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </ChartHeight>
+        <Card>
+          <CardHeader><CardTitle>Allocation</CardTitle></CardHeader>
+          <AllocationDonut holdings={holdingsData} />
         </Card>
 
-        <Card title="Composition by position">
-          <ChartHeight>
-            {positionPieData.length === 0 ? (
-              <Empty />
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={positionPieData}
-                    dataKey="value"
-                    nameKey="name"
-                    outerRadius="80%"
-                  >
-                    {positionPieData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(v: number) => formatCurrency(v)}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </ChartHeight>
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Activity</CardTitle>
+          </CardHeader>
+          <RecentActivity transactions={recentTxs} />
         </Card>
       </div>
-
-      <Card title="Net worth — last 3 months">
-        <ChartHeight>
-          {!navHistory.data || navHistory.data.length === 0 ? (
-            <Empty hint="Snapshots are written nightly. Once you've used the app for a few days they'll appear here." />
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={navHistory.data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border))" />
-                <XAxis dataKey="date" />
-                <YAxis tickFormatter={(v) => formatCurrency(v)} width={90} />
-                <Tooltip
-                  formatter={(v: number) => formatCurrency(v)}
-                  labelFormatter={(l) => `Date: ${l}`}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="total"
-                  stroke={COLORS[0]}
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </ChartHeight>
-      </Card>
-
-      <Card title="Top movers">
-        {topMovers.length === 0 ? (
-          <Empty />
-        ) : (
-          <div className="divide-y divide-border">
-            {topMovers.map((p) => (
-              <div
-                key={p.asset_id + "-" + p.account_id}
-                className="py-2 flex items-center justify-between"
-              >
-                <div>
-                  <div className="font-medium">{p.symbol}</div>
-                  <div className="text-xs text-muted">{p.account_name}</div>
-                </div>
-                <div className={cn("text-right", plClass(p.unrealized_pl))}>
-                  <div className="font-medium">
-                    {formatCurrency(p.unrealized_pl)}
-                  </div>
-                  <div className="text-xs">
-                    {formatPercent(p.unrealized_pl_pct)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
     </div>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "warn";
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div
-        className={cn(
-          "text-2xl font-semibold mt-1",
-          tone === "warn" ? "text-amber-500" : "",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <div className="text-sm font-medium mb-3">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function ChartHeight({ children }: { children: React.ReactNode }) {
-  return <div className="h-72">{children}</div>;
-}
-
-function Empty({ hint }: { hint?: string }) {
-  return (
-    <div className="h-full flex items-center justify-center text-sm text-muted">
-      <div className="text-center">
-        <div>No data yet.</div>
-        {hint && <div className="mt-1 text-xs">{hint}</div>}
-      </div>
-    </div>
-  );
+  )
 }

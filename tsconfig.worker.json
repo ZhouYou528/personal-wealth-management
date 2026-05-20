@@ -3,19 +3,20 @@
     "target": "ES2022",
     "lib": ["ES2022"],
     "module": "ESNext",
+    "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
+    "noEmit": true,
     "strict": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["@cloudflare/workers-types"],
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["./src/shared/*"]
-    },
-    "types": ["@cloudflare/workers-types"],
-    "noEmit": true
+      "@shared/*": ["src/shared/*"]
+    }
   },
-  "include": ["src/worker", "src/shared", "worker-configuration.d.ts"]
+  "include": ["src/worker", "src/shared"]
 }

@@ -1,98 +1,99 @@
-// Thin typed fetch wrapper for our Hono backend.
-//
-// In dev, Vite proxies /api/* to the Worker. In prod, the same Worker serves both.
-
 import type {
-  Account,
-  AccountCreate,
-  Asset,
-  AssetCreate,
-  Transaction,
-  TransactionCreate,
-  Position,
-} from "@shared/schemas";
+  Account, Transaction, Holding, WatchlistItem, Goal,
+  CalendarEvent, NavSnapshot, Quote, TickerSearchResult,
+} from '@shared/types'
 
-async function http<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+const BASE = '/api'
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    ...init,
+  })
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`);
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error: string }
+    throw new Error(err.error ?? res.statusText)
   }
-  // 204 No Content
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return res.json() as Promise<T>
 }
 
-export const api = {
-  health: () => http<{ ok: true; ts: string }>("GET", "/health"),
+// ── Accounts ────────────────────────────────────────────────
 
-  // accounts
-  listAccounts: () => http<Account[]>("GET", "/accounts"),
-  createAccount: (data: AccountCreate) =>
-    http<Account>("POST", "/accounts", data),
-  updateAccount: (id: number, data: Partial<AccountCreate>) =>
-    http<Account>("PATCH", `/accounts/${id}`, data),
-  deleteAccount: (id: number) => http<void>("DELETE", `/accounts/${id}`),
+export const accounts = {
+  list: ()                                              => request<Account[]>('/accounts'),
+  get:  (id: string)                                    => request<Account>(`/accounts/${id}`),
+  create: (body: Omit<Account, 'id' | 'created_at'>)   => request<Account>('/accounts', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<Account>)          => request<Account>(`/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string)                                  => request<{ ok: boolean }>(`/accounts/${id}`, { method: 'DELETE' }),
+}
 
-  // assets
-  listAssets: () => http<Asset[]>("GET", "/assets"),
-  searchAssets: (q: string) =>
-    http<Asset[]>("GET", `/assets/search?q=${encodeURIComponent(q)}`),
-  createAsset: (data: AssetCreate) => http<Asset>("POST", "/assets", data),
+// ── Transactions ─────────────────────────────────────────────
 
-  // transactions
-  listTransactions: (params?: {
-    account_id?: number;
-    asset_id?: number;
-    type?: string;
-    from?: string;
-    to?: string;
-    limit?: number;
-  }) => {
-    const q = new URLSearchParams();
-    if (params) {
-      for (const [k, v] of Object.entries(params)) {
-        if (v !== undefined && v !== null && v !== "")
-          q.set(k, String(v));
-      }
-    }
-    const qs = q.toString();
-    return http<Transaction[]>("GET", `/transactions${qs ? `?${qs}` : ""}`);
+export interface TxListParams { accountId?: string; symbol?: string; limit?: number; offset?: number }
+
+export const transactions = {
+  list:   (params: TxListParams = {}) => {
+    const qs = new URLSearchParams()
+    if (params.accountId) qs.set('accountId', params.accountId)
+    if (params.symbol)    qs.set('symbol', params.symbol)
+    if (params.limit)     qs.set('limit', String(params.limit))
+    if (params.offset)    qs.set('offset', String(params.offset))
+    return request<Transaction[]>(`/transactions?${qs}`)
   },
-  createTransaction: (data: TransactionCreate) =>
-    http<Transaction>("POST", "/transactions", data),
-  updateTransaction: (id: number, data: Partial<TransactionCreate>) =>
-    http<Transaction>("PATCH", `/transactions/${id}`, data),
-  deleteTransaction: (id: number) =>
-    http<void>("DELETE", `/transactions/${id}`),
+  get:    (id: string)                                        => request<Transaction>(`/transactions/${id}`),
+  create: (body: Omit<Transaction, 'id' | 'created_at'>)     => request<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<Transaction>)            => request<Transaction>(`/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string)                                        => request<{ ok: boolean }>(`/transactions/${id}`, { method: 'DELETE' }),
+}
 
-  // market data + positions
-  getQuote: (symbol: string, assetClass: string) =>
-    http<{ price: number; as_of: string; source: string }>(
-      "GET",
-      `/market/quote?symbol=${encodeURIComponent(symbol)}&class=${encodeURIComponent(assetClass)}`,
-    ),
-  getPositions: () => http<Position[]>("GET", "/portfolio/positions"),
-  getNetWorth: () =>
-    http<{
-      total: number;
-      by_class: Record<string, number>;
-      as_of: string;
-      stale_assets: { symbol: string; reason: string }[];
-    }>("GET", "/portfolio/net-worth"),
-  getNavHistory: (range: "1M" | "3M" | "1Y" | "ALL" = "3M") =>
-    http<{ date: string; total: number }[]>(
-      "GET",
-      `/portfolio/nav-history?range=${range}`,
-    ),
-  refreshPrices: () =>
-    http<{ refreshed: number; failed: number }>("POST", "/market/refresh"),
-};
+// ── Holdings ────────────────────────────────────────────────
+
+export const holdings = {
+  list: (accountId?: string, prices = true) => {
+    const qs = new URLSearchParams({ prices: String(prices) })
+    if (accountId) qs.set('accountId', accountId)
+    return request<Holding[]>(`/holdings?${qs}`)
+  },
+}
+
+// ── Watchlist ────────────────────────────────────────────────
+
+export const watchlist = {
+  list:   ()                                                  => request<WatchlistItem[]>('/watchlist'),
+  add:    (body: Omit<WatchlistItem, 'id' | 'added_at'>)     => request<WatchlistItem>('/watchlist', { method: 'POST', body: JSON.stringify(body) }),
+  remove: (id: string)                                        => request<{ ok: boolean }>(`/watchlist/${id}`, { method: 'DELETE' }),
+}
+
+// ── Goals ────────────────────────────────────────────────────
+
+export const goals = {
+  list:   ()                                              => request<Goal[]>('/goals'),
+  create: (body: Omit<Goal, 'id' | 'created_at'>)        => request<Goal>('/goals', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<Goal>)               => request<Goal>(`/goals/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string)                                    => request<{ ok: boolean }>(`/goals/${id}`, { method: 'DELETE' }),
+}
+
+// ── Market data ──────────────────────────────────────────────
+
+export const market = {
+  quotes: (symbols: string[]) =>
+    request<{ quotes: Record<string, Quote> }>(`/market/quotes?symbols=${symbols.join(',')}`),
+  search: (q: string) =>
+    request<{ results: TickerSearchResult[] }>(`/market/search?q=${encodeURIComponent(q)}`),
+}
+
+// ── Events ───────────────────────────────────────────────────
+
+export const events = {
+  upcoming: () => request<CalendarEvent[]>('/events'),
+}
+
+// ── NAV ──────────────────────────────────────────────────────
+
+export const nav = {
+  history: (days = 365, accountId?: string) => {
+    const qs = new URLSearchParams({ days: String(days) })
+    if (accountId) qs.set('accountId', accountId)
+    return request<NavSnapshot[]>(`/nav?${qs}`)
+  },
+}

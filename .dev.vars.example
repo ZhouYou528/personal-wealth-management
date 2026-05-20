@@ -1,5 +1,3 @@
-# Copy to `.dev.vars` (gitignored) and fill in.
-# Used by `wrangler dev` / Vite dev server to inject Worker Secrets locally.
-FINNHUB_API_KEY=""
-COINGECKO_DEMO_API_KEY=""
-ALPHAVANTAGE_API_KEY=""
+# Copy to .dev.vars (gitignored) for local dev. wrangler reads .dev.vars automatically.
+FINNHUB_KEY=d86gdm1r01qgiu45ap2gd86gdm1r01qgiu45ap30
+COINGECKO_KEY=CG-kPKYdHR8dj6Nxs6rSeSmrVtd

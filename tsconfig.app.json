@@ -6,22 +6,20 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": false,
-    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
+    "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/client/*"],
-      "@shared/*": ["./src/shared/*"]
-    },
-    "types": ["vite/client"],
-    "noEmit": true
+      "@/*": ["src/client/*"],
+      "@shared/*": ["src/shared/*"]
+    }
   },
   "include": ["src/client", "src/shared"]
 }

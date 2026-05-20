@@ -1,0 +1,34 @@
+name = "meridian"
+main = "src/worker/index.ts"
+compatibility_date = "2024-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Static assets — Vite output served by Cloudflare CDN.
+# The Worker handles /api/* and falls back to index.html for SPA routing.
+[assets]
+directory = "dist"
+binding = "ASSETS"
+
+# --- D1 database ---
+# Run once: wrangler d1 create pwm_db
+# Then paste the returned database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "pwm_db"
+database_id = "d09e0fa3-369e-4ff7-820d-34edc968e93e"
+
+# --- KV namespace (60-second price cache) ---
+# Run once: wrangler kv namespace create PRICE_CACHE
+# Then paste the returned id (and preview_id for local dev) below.
+[[kv_namespaces]]
+binding = "PRICE_CACHE"
+id = "0f994a5e772446369d7f51ce9b8fdac0"
+preview_id = "0f994a5e772446369d7f51ce9b8fdac0"
+
+# --- Secrets (set via: wrangler secret put FINNHUB_KEY) ---
+# FINNHUB_KEY    — from finnhub.io (free tier)
+# COINGECKO_KEY  — from coingecko.com Demo plan
+
+[vars]
+# Non-secret vars (overridden by secrets in production)
+ENVIRONMENT = "development"

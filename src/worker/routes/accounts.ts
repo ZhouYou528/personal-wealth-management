@@ -1,66 +1,51 @@
-import { Hono } from "hono";
-import { AccountCreate } from "@shared/schemas";
-import { dbAll, dbFirst, dbRun, getAccount } from "../db/queries";
-import type { Env } from "../types";
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import type { Env } from '../types'
 
-export const accountsRoutes = new Hono<{ Bindings: Env }>();
+const uid = () => crypto.randomUUID().replace(/-/g, '').slice(0, 8)
+import * as q from '../db/queries'
 
-accountsRoutes.get("/", async (c) => {
-  const rows = await dbAll(c.env.DB, "SELECT * FROM accounts ORDER BY name ASC");
-  return c.json(rows);
-});
+const AccountSchema = z.object({
+  name:        z.string().min(1),
+  type:        z.enum(['RRSP','TFSA','FHSA','RESP','Margin','Cash','Crypto','Non-registered']),
+  institution: z.string().default(''),
+  color:       z.string().default('#10B981'),
+  number:      z.string().default(''),
+})
 
-accountsRoutes.post("/", async (c) => {
-  const data = AccountCreate.parse(await c.req.json());
-  const res = await dbRun(
-    c.env.DB,
-    `INSERT INTO accounts (name, type, currency, institution)
-     VALUES (?, ?, ?, ?)`,
-    [data.name, data.type, data.currency, data.institution ?? null],
-  );
-  const id = res.meta.last_row_id;
-  const created = await getAccount(c.env.DB, Number(id));
-  return c.json(created, 201);
-});
+const app = new Hono<{ Bindings: Env }>()
 
-accountsRoutes.patch("/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  const data = AccountCreate.partial().parse(await c.req.json());
-  const existing = await getAccount(c.env.DB, id);
-  if (!existing) return c.json({ error: "Not found" }, 404);
+app.get('/', async (c) => {
+  const accounts = await q.getAccounts(c.env.DB)
+  return c.json(accounts)
+})
 
-  const merged = { ...existing, ...data };
-  await dbRun(
-    c.env.DB,
-    `UPDATE accounts SET name = ?, type = ?, currency = ?, institution = ?
-     WHERE id = ?`,
-    [
-      merged.name,
-      merged.type,
-      merged.currency,
-      merged.institution ?? null,
-      id,
-    ],
-  );
-  return c.json(await getAccount(c.env.DB, id));
-});
+app.get('/:id', async (c) => {
+  const account = await q.getAccount(c.env.DB, c.req.param('id'))
+  if (!account) return c.json({ error: 'Not found' }, 404)
+  return c.json(account)
+})
 
-accountsRoutes.delete("/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  // Check for transactions referencing this account
-  const tx = await dbFirst<{ n: number }>(
-    c.env.DB,
-    "SELECT COUNT(*) AS n FROM transactions WHERE account_id = ?",
-    [id],
-  );
-  if (tx && tx.n > 0) {
-    return c.json(
-      {
-        error: `Account has ${tx.n} transaction(s). Delete transactions first.`,
-      },
-      409,
-    );
-  }
-  await dbRun(c.env.DB, "DELETE FROM accounts WHERE id = ?", [id]);
-  return c.body(null, 204);
-});
+app.post('/', zValidator('json', AccountSchema), async (c) => {
+  const body = c.req.valid('json')
+  const account = { ...body, id: `acc_${uid()}` }
+  await q.insertAccount(c.env.DB, account)
+  return c.json(account, 201)
+})
+
+app.patch('/:id', zValidator('json', AccountSchema.partial()), async (c) => {
+  const id = c.req.param('id')
+  const existing = await q.getAccount(c.env.DB, id)
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  const body = c.req.valid('json')
+  await q.updateAccount(c.env.DB, id, body)
+  return c.json({ ...existing, ...body })
+})
+
+app.delete('/:id', async (c) => {
+  await q.deleteAccount(c.env.DB, c.req.param('id'))
+  return c.json({ ok: true })
+})
+
+export default app

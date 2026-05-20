@@ -1,53 +1,51 @@
-import { Hono } from "hono";
-import { dbAll, dbRun } from "../db/queries";
-import { getQuote, type AssetClassLite } from "../adapters/router";
-import type { Env } from "../types";
-import type { Asset } from "@shared/schemas";
+import { Hono } from 'hono'
+import type { Env } from '../types'
+import { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote, STATIC_TICKERS } from '../lib/market'
+import type { Quote } from '@shared/types'
 
-export const marketRoutes = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env }>()
 
-marketRoutes.get("/quote", async (c) => {
-  const symbol = c.req.query("symbol");
-  const assetClass = (c.req.query("class") ?? "stock") as AssetClassLite;
-  if (!symbol) return c.json({ error: "symbol required" }, 400);
-  const q = await getQuote(c.env, symbol, assetClass);
-  return c.json(q);
-});
+// GET /api/market/quotes?symbols=AAPL,BTC,VEQT.TO
+// Batch price lookup — up to 12 symbols per call (Finnhub free-tier: 60 req/min)
+app.get('/quotes', async (c) => {
+  const symbolsParam = c.req.query('symbols') ?? ''
+  const symbols = symbolsParam.split(',').map(s => s.trim()).filter(Boolean).slice(0, 12)
 
-// POST /api/market/refresh — re-fetch quotes for every asset currently held.
-marketRoutes.post("/refresh", async (c) => {
-  // Held assets = assets that appear in any transaction with non-zero qty,
-  // excluding cash (priced internally).
-  const heldAssets = await dbAll<Asset>(
-    c.env.DB,
-    `SELECT a.* FROM assets a
-     WHERE a.asset_class != 'cash'
-       AND a.id IN (
-         SELECT DISTINCT asset_id FROM transactions WHERE asset_id IS NOT NULL
-       )`,
-  );
+  const quotes: Record<string, Quote> = {}
 
-  let refreshed = 0;
-  let failed = 0;
-  for (const a of heldAssets) {
-    try {
-      const q = await getQuote(c.env, a.symbol, a.asset_class as AssetClassLite);
-      await dbRun(
-        c.env.DB,
-        `INSERT INTO prices (asset_id, price, currency, as_of, source)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(asset_id) DO UPDATE SET
-           price = excluded.price,
-           currency = excluded.currency,
-           as_of = excluded.as_of,
-           source = excluded.source`,
-        [a.id, q.price, q.currency, q.as_of, q.source],
-      );
-      refreshed++;
-    } catch (e) {
-      console.warn(`[refresh] ${a.symbol}: ${(e as Error).message}`);
-      failed++;
-    }
-  }
-  return c.json({ refreshed, failed });
-});
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      const cacheKey = `quote:${symbol}`
+      const cached = await c.env.PRICE_CACHE.get(cacheKey, 'json') as Quote | null
+      if (cached) { quotes[symbol] = cached; return }
+
+      const quote = isCrypto(symbol)
+        ? await fetchCoinGeckoQuote(symbol, c.env.COINGECKO_KEY)
+        : await fetchFinnhubQuote(symbol, c.env.FINNHUB_KEY)
+
+      if (quote) {
+        await c.env.PRICE_CACHE.put(cacheKey, JSON.stringify(quote), { expirationTtl: 60 })
+        quotes[symbol] = quote
+      }
+    })
+  )
+
+  return c.json({ quotes })
+})
+
+// GET /api/market/search?q=apple
+app.get('/search', (c) => {
+  const q = (c.req.query('q') ?? '').toLowerCase().trim()
+  if (!q) return c.json({ results: [] })
+
+  const results = STATIC_TICKERS
+    .filter(t =>
+      t.symbol.toLowerCase().includes(q) ||
+      t.name.toLowerCase().includes(q)
+    )
+    .slice(0, 8)
+
+  return c.json({ results })
+})
+
+export default app
