@@ -157,7 +157,12 @@ export function HoldingDetail() {
                   <KindSelect
                     value={holding.kind}
                     pending={changeKindMut.isPending}
-                    onChange={(k) => k !== holding.kind && changeKindMut.mutate(k)}
+                    onChange={(k) => {
+                      if (k === holding.kind) return
+                      const n = txs.filter(t => t.symbol === holding.symbol && t.account_id === holding.account_id).length
+                      const msg = `Reclassify ${n} ${holding.symbol} transaction${n === 1 ? '' : 's'} from ${holding.kind.toUpperCase()} to ${k.toUpperCase()}? This rewrites every existing row and can't be undone.`
+                      if (confirm(msg)) changeKindMut.mutate(k)
+                    }}
                   />
                 )}
               </div>
@@ -316,7 +321,10 @@ function MarkEditor({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(currentPx))
 
-  useEffect(() => { setDraft(String(currentPx)) }, [holdingId, currentPx])
+  // Reset draft only when the holding ID changes (e.g. navigated to a different position).
+  // Intentionally NOT depending on currentPx — otherwise a holdings refetch while the user
+  // is mid-typing would overwrite their input.
+  useEffect(() => { setDraft(String(currentPx)) }, [holdingId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!editing) {
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -107,12 +107,19 @@ export function AddTxModal() {
     setStep('form')
   }
 
-  // Apply prefill / edit values when modal opens
+  // Prefill once per open. Without this ref, a React Query refetch of `accs` mid-edit
+  // would re-run the effect and clobber whatever the user has typed.
+  const prefilledForOpenRef = useRef(false)
   useEffect(() => {
-    if (!addTxOpen) return
+    if (!addTxOpen) {
+      prefilledForOpenRef.current = false
+      return
+    }
+    if (prefilledForOpenRef.current) return
 
     // Edit mode: prefill everything from the existing transaction
     if (editTx) {
+      prefilledForOpenRef.current = true
       setStep('form')
       setType(editTx.type as TxType)
       setAccountId(editTx.account_id)
@@ -136,13 +143,17 @@ export function AddTxModal() {
       return
     }
 
+    // Add mode: wait for accs to load before marking as prefilled (otherwise we miss
+    // setting the default account).
+    if (accs.length === 0) return
+    prefilledForOpenRef.current = true
     if (addTxPrefill?.type) { setType(addTxPrefill.type as TxType); setStep('form') }
     if (addTxPrefill?.symbol) setSymbol(addTxPrefill.symbol)
     if (addTxPrefill?.accountId) {
       setAccountId(addTxPrefill.accountId)
       const acc = accs.find(a => a.id === addTxPrefill.accountId)
       if (acc) setAccountType(acc.type)
-    } else if (accs.length > 0 && !accountId) {
+    } else if (!accountId) {
       setAccountId(accs[0].id)
       setAccountType(accs[0].type)
     }

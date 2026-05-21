@@ -9,7 +9,9 @@
     "deploy": "npm run build && wrangler deploy",
     "migrate:local": "wrangler d1 execute pwm_db --local --file=migrations/0001_schema.sql",
     "migrate:prod": "wrangler d1 execute pwm_db --remote --file=migrations/0001_schema.sql",
-    "type-check": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json"
+    "type-check": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.1",
@@ -48,6 +50,7 @@
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^5.4.9",
+    "vitest": "^4.1.7",
     "wrangler": "^4.93.0"
   }
 }

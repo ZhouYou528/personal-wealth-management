@@ -23,6 +23,7 @@ export async function insertAccount(db: D1Database, a: Omit<Account, 'created_at
 
 export async function updateAccount(db: D1Database, id: string, a: Partial<Omit<Account, 'id' | 'created_at'>>): Promise<void> {
   const fields = Object.keys(a) as (keyof typeof a)[]
+  if (fields.length === 0) return
   const set = fields.map(f => `${f} = ?`).join(', ')
   const values = fields.map(f => a[f])
   await db.prepare(`UPDATE accounts SET ${set} WHERE id = ?`).bind(...values, id).run()
@@ -87,6 +88,7 @@ export async function insertTransaction(db: D1Database, t: Omit<Transaction, 'cr
 
 export async function updateTransaction(db: D1Database, id: string, t: Partial<Omit<Transaction, 'id' | 'created_at'>>): Promise<void> {
   const fields = Object.keys(t) as (keyof typeof t)[]
+  if (fields.length === 0) return
   const set = fields.map(f => `${f} = ?`).join(', ')
   const values = fields.map(f => t[f] ?? null)
   await db.prepare(`UPDATE transactions SET ${set} WHERE id = ?`).bind(...values, id).run()
@@ -146,6 +148,7 @@ export async function insertGoal(db: D1Database, g: Omit<Goal, 'created_at'>): P
 
 export async function updateGoal(db: D1Database, id: string, g: Partial<Omit<Goal, 'id' | 'created_at'>>): Promise<void> {
   const fields = Object.keys(g) as (keyof typeof g)[]
+  if (fields.length === 0) return
   const set = fields.map(f => `${f} = ?`).join(', ')
   const values = fields.map(f => g[f])
   await db.prepare(`UPDATE goals SET ${set} WHERE id = ?`).bind(...values, id).run()

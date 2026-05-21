@@ -5,7 +5,7 @@ import type { Env } from '../types'
 import * as q from '../db/queries'
 import { computeHoldings } from '../lib/positions'
 import { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } from '../lib/market'
-import type { Holding } from '@shared/types'
+import type { Holding, Quote } from '@shared/types'
 
 const SYMBOL_NAMES: Record<string, string> = {
   CASH: 'Cash', BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
@@ -23,18 +23,19 @@ async function resolveQuote(
   if (symbol === 'CASH') return { price: 1 }
   // No free options-quote feed; fall back to cost basis until user marks-to-market
   if (kind === 'option') return { price: fallback }
+  // Store the full Quote shape so both /api/holdings and /api/market/quotes can share
+  // the cache without one truncating the other.
   const cacheKey = `quote:${symbol}`
-  const cached = await env.PRICE_CACHE.get(cacheKey, 'json') as ResolvedQuote | null
-  if (cached) return cached
+  const cached = await env.PRICE_CACHE.get(cacheKey, 'json') as Quote | null
+  if (cached) return { price: cached.price, change: cached.change, changePct: cached.changePct }
 
   const quote = isCrypto(symbol)
     ? await fetchCoinGeckoQuote(symbol, env.COINGECKO_KEY)
     : await fetchFinnhubQuote(symbol, env.FINNHUB_KEY)
 
   if (quote) {
-    const r: ResolvedQuote = { price: quote.price, change: quote.change, changePct: quote.changePct }
-    await env.PRICE_CACHE.put(cacheKey, JSON.stringify(r), { expirationTtl: 60 })
-    return r
+    await env.PRICE_CACHE.put(cacheKey, JSON.stringify(quote), { expirationTtl: 60 })
+    return { price: quote.price, change: quote.change, changePct: quote.changePct }
   }
   return { price: fallback }
 }

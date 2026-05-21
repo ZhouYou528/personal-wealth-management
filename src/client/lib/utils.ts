@@ -107,7 +107,7 @@ export function fmtOptionLabel(o: {
   const cp = o.option_type === 'put' ? 'P' : 'C'
   const strike = o.strike != null ? `${o.strike}${cp}` : cp
   if (!o.expiry) return `${o.symbol} ${strike}`
-  const d = new Date(o.expiry)
+  const d = parseISODateLocal(o.expiry)
   const date = `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`
   return `${o.symbol} ${strike} ${date}`
 }
