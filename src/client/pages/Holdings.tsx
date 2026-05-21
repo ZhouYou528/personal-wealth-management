@@ -22,11 +22,17 @@ const FILTERS: { label: string; value: AssetKind | 'all' }[] = [
 type SortKey = 'symbol' | 'account' | 'qty' | 'price' | 'today' | 'value' | 'pnl' | 'alloc'
 type Dir = 'asc' | 'desc'
 
-// Mobile right-side metric — tap to cycle
-type MobileMetric = { key: string; label: string; render: (h: EnrichedHolding) => React.ReactNode }
+// Mobile right-side metric — tapping a row value cycles to the next; tapping the
+// header sorts by the current one.
+type MobileMetric = {
+  key: string
+  label: string
+  sortKey: SortKey
+  render: (h: EnrichedHolding) => React.ReactNode
+}
 const MOBILE_METRICS: MobileMetric[] = [
   {
-    key: 'pnl', label: 'P&L',
+    key: 'pnl', label: 'P&L', sortKey: 'pnl',
     render: (h) => (
       <div className="flex flex-col items-end gap-0.5">
         <span className={cn('tabular text-small private-val', h.pnl >= 0 ? 'text-up' : 'text-down')}>
@@ -37,7 +43,7 @@ const MOBILE_METRICS: MobileMetric[] = [
     ),
   },
   {
-    key: 'today', label: 'Today',
+    key: 'today', label: 'Today', sortKey: 'today',
     render: (h) => h.changePct != null ? (
       <div className="text-right">
         <div className={cn('tabular text-small font-semibold private-val', h.changePct >= 0 ? 'text-up' : 'text-down')}>
@@ -50,20 +56,27 @@ const MOBILE_METRICS: MobileMetric[] = [
     ) : <div className="text-[11px] text-text-3 text-right">—</div>,
   },
   {
-    key: 'value', label: 'Value',
+    key: 'value', label: 'Value', sortKey: 'value',
     render: (h) => <div className="tabular text-small font-semibold text-text private-val text-right">{fmtMoney(h.value)}</div>,
   },
   {
-    key: 'qty', label: 'Qty',
+    key: 'qty', label: 'Qty', sortKey: 'qty',
     render: (h) => <div className="tabular text-small text-text-2 text-right">{fmtQty(h.qty)}</div>,
   },
   {
-    key: 'price', label: 'Price',
+    key: 'price', label: 'Price', sortKey: 'price',
     render: (h) => <div className="tabular text-small text-text text-right">{fmtMoney(h.px)}</div>,
   },
   {
-    key: 'alloc', label: 'Alloc',
-    render: (h) => <div className="tabular text-small text-text-2 text-right">{h.alloc.toFixed(1)}%</div>,
+    key: 'alloc', label: 'Alloc', sortKey: 'alloc',
+    render: (h) => (
+      <div className="flex items-center gap-2 justify-end">
+        <div className="w-14 h-1 bg-surface-2 rounded-full overflow-hidden">
+          <div className="h-full bg-accent rounded-full" style={{ width: `${Math.min(h.alloc, 100)}%` }} />
+        </div>
+        <span className="tabular text-[11px] text-text-3 w-10 text-right">{h.alloc.toFixed(1)}%</span>
+      </div>
+    ),
   },
 ]
 
@@ -272,7 +285,7 @@ export function Holdings() {
 
           {/* ── Mobile list ───────────────────────────────────────── */}
           <div className="sm:hidden bg-surface rounded-md border border-border">
-            {/* Metric switcher header */}
+            {/* Header — tap left to sort by symbol, tap right to sort by current metric */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-border">
               <button
                 onClick={() => toggleSort('symbol')}
@@ -282,12 +295,12 @@ export function Holdings() {
                 <SortArrow active={sortKey === 'symbol'} dir={sortDir} />
               </button>
               <button
-                onClick={() => setMobileIdx(i => (i + 1) % MOBILE_METRICS.length)}
+                onClick={() => toggleSort(mobileMetric.sortKey)}
                 className="text-micro text-text-3 uppercase tracking-wider font-medium flex items-center gap-1"
-                title="Tap to switch metric"
+                title="Tap to sort by this column"
               >
                 {mobileMetric.label}
-                <ChevronDown size={11} className="text-text-3" />
+                <SortArrow active={sortKey === mobileMetric.sortKey} dir={sortDir} />
               </button>
             </div>
 

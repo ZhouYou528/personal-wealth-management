@@ -173,16 +173,19 @@ export async function getNavSnapshots(
 ): Promise<NavSnapshot[]> {
   const id = accountId ?? ''
   const { results } = await db.prepare(
-    `SELECT * FROM nav_snapshots WHERE account_id = ? AND snap_date >= date('now', '-${days} days') ORDER BY snap_date ASC`
+    `SELECT snap_date, account_id, value, source FROM nav_snapshots
+       WHERE account_id = ? AND snap_date >= date('now', '-${days} days')
+       ORDER BY snap_date ASC`
   ).bind(id).all<NavSnapshot>()
   return results
 }
 
 export async function upsertNavSnapshot(db: D1Database, snap: NavSnapshot): Promise<void> {
+  const source = snap.source ?? 'cost'
   await db.prepare(`
-    INSERT INTO nav_snapshots (snap_date, account_id, value) VALUES (?, ?, ?)
-    ON CONFLICT(snap_date, account_id) DO UPDATE SET value = excluded.value
-  `).bind(snap.snap_date, snap.account_id ?? '', snap.value).run()
+    INSERT INTO nav_snapshots (snap_date, account_id, value, source) VALUES (?, ?, ?, ?)
+    ON CONFLICT(snap_date, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
+  `).bind(snap.snap_date, snap.account_id ?? '', snap.value, source).run()
 }
 
 // ---------- Holding marks (user-set current prices) ----------

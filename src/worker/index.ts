@@ -110,8 +110,8 @@ async function runDailySnapshot(env: Env): Promise<void> {
 
   const today = new Date().toISOString().split('T')[0]
   await Promise.all([
-    q.upsertNavSnapshot(env.DB, { snap_date: today, account_id: '', value: aggregate }),
+    q.upsertNavSnapshot(env.DB, { snap_date: today, account_id: '', value: aggregate, source: 'market' }),
     ...Object.entries(byAccount).map(([account_id, value]) =>
-      q.upsertNavSnapshot(env.DB, { snap_date: today, account_id, value })),
+      q.upsertNavSnapshot(env.DB, { snap_date: today, account_id, value, source: 'market' })),
   ])
 }

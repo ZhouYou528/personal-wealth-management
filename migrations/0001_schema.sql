@@ -70,10 +70,15 @@ CREATE TABLE IF NOT EXISTS holding_marks (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- snap_date primary-keyed nav values.
+-- `source` = 'cost'   → cost-basis snapshot written by /api/nav/backfill (historical reconstruction)
+-- `source` = 'market' → market-value snapshot written by the daily cron at 22:00 UTC
+-- The backfill only deletes/rewrites 'cost' rows, so cron data accumulates permanently.
 CREATE TABLE IF NOT EXISTS nav_snapshots (
   snap_date  TEXT NOT NULL,
   account_id TEXT NOT NULL DEFAULT '',
   value      REAL NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'cost',
   PRIMARY KEY (snap_date, account_id)
 );
 

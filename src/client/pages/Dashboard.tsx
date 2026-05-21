@@ -146,7 +146,20 @@ function NavChart({
 
 // ── Period stat cell ──────────────────────────────────────────
 
-function PeriodStat({ label, change, pct }: { label: string; change: number; pct: number }) {
+function PeriodStat({ label, change, pct, pending }: {
+  label: string; change: number; pct: number; pending?: boolean
+}) {
+  if (pending) {
+    return (
+      <div>
+        <p className="text-micro text-text-3 uppercase tracking-wider mb-1">{label}</p>
+        <p className="tabular text-[15px] font-semibold text-text-3">—</p>
+        <p className="text-[11px] text-text-3" title="Pending — accumulates as the daily snapshot runs">
+          pending
+        </p>
+      </div>
+    )
+  }
   const up = change >= 0
   return (
     <div>
@@ -230,9 +243,9 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-start gap-5">
+      <div className="flex items-start gap-5">
         {/* Donut */}
-        <div className="relative flex-shrink-0 self-center sm:self-auto" style={{ width: 148, height: 148 }}>
+        <div className="relative flex-shrink-0" style={{ width: 148, height: 148 }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -367,12 +380,15 @@ export function Dashboard() {
     [navData],
   )
 
-  function periodChange(days: number) {
+  function periodChange(days: number): { change: number; pct: number; pending: boolean } {
     const target = daysAgoDate(days)
-    const snap = findSnapBefore(sortedSnaps, target)
-    if (!snap || snap.value === 0) return { change: 0, pct: 0 }
+    // Only use market-value snapshots — comparing live market value against cost-basis
+    // snapshots produces a number that conflates appreciation with period change.
+    const marketSnaps = sortedSnaps.filter(s => s.source === 'market')
+    const snap = findSnapBefore(marketSnaps, target)
+    if (!snap || snap.value === 0) return { change: 0, pct: 0, pending: true }
     const change = currentValue - snap.value
-    return { change, pct: (change / snap.value) * 100 }
+    return { change, pct: (change / snap.value) * 100, pending: false }
   }
 
   // "Today" comes straight from live per-holding daily change (Finnhub `dp` field).
@@ -384,6 +400,7 @@ export function Dashboard() {
   const todayChange = {
     change: todayDollar,
     pct: todayBaseline > 0 ? (todayDollar / todayBaseline) * 100 : 0,
+    pending: false,
   }
 
   const weekChange    = periodChange(7)
@@ -392,6 +409,7 @@ export function Dashboard() {
   const allTimeChange = {
     change: currentValue - costBasis,
     pct: costBasis > 0 ? ((currentValue - costBasis) / costBasis) * 100 : 0,
+    pending: false,
   }
 
   const selectedPeriodChange = range === 'ALL' ? allTimeChange : periodChange(RANGE_DAYS[range])

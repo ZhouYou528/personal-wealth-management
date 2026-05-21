@@ -21,8 +21,10 @@ app.post('/backfill', async (c) => {
 
   async function backfillAccount(filterById: string | undefined, storeId: string) {
     const txs = await q.getAllTransactionsForHoldings(c.env.DB, filterById)
-    // Wipe-and-rebuild so deleted transactions don't leave stale snapshots behind
-    await c.env.DB.prepare('DELETE FROM nav_snapshots WHERE account_id = ?').bind(storeId).run()
+    // Only wipe cost-basis rows. Daily-cron market-value rows persist across backfills.
+    await c.env.DB.prepare(
+      "DELETE FROM nav_snapshots WHERE account_id = ? AND source = 'cost'"
+    ).bind(storeId).run()
     const dates = [...new Set(txs.map(t => t.tx_date.slice(0, 10)))].sort()
     if (dates.length === 0) return 0
     const earliest = dates[0]
@@ -41,7 +43,12 @@ app.post('/backfill', async (c) => {
         if (h.symbol === 'CASH') return sum + h.qty
         return sum + h.qty * h.cost * (h.multiplier ?? 1)
       }, 0)
-      await q.upsertNavSnapshot(c.env.DB, { snap_date: date, account_id: storeId, value })
+      // ON CONFLICT: skip dates that already have a market-value (cron) snapshot
+      const existing = await c.env.DB
+        .prepare("SELECT source FROM nav_snapshots WHERE snap_date = ? AND account_id = ?")
+        .bind(date, storeId).first<{ source: string }>()
+      if (existing?.source === 'market') continue
+      await q.upsertNavSnapshot(c.env.DB, { snap_date: date, account_id: storeId, value, source: 'cost' })
     }
     return dates.length
   }

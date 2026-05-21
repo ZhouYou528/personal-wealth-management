@@ -95,10 +95,13 @@ export interface CalendarEvent {
   note?: string
 }
 
+export type NavSnapshotSource = 'cost' | 'market'
+
 export interface NavSnapshot {
   snap_date: string
   account_id?: string
   value: number
+  source?: NavSnapshotSource
 }
 
 // Quote returned by /api/market/quotes
