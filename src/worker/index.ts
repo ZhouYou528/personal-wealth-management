@@ -26,6 +26,12 @@ api.get('/events', async (c) => {
   return c.json(events)
 })
 
+// POST /api/admin/run-snapshot — manually invoke the daily snapshot job
+api.post('/admin/run-snapshot', async (c) => {
+  await runDailySnapshot(c.env)
+  return c.json({ ok: true })
+})
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url)
@@ -47,31 +53,65 @@ export default {
     return assetRes
   },
 
-  // Nightly cron trigger — refresh nav snapshots
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const { computeHoldings } = await import('./lib/positions')
-    const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
-
-    const transactions = await q.getAllTransactionsForHoldings(env.DB)
-    const holdings = computeHoldings(transactions)
-
-    let totalValue = 0
-    for (const h of holdings) {
-      if (h.symbol === 'CASH') { totalValue += h.qty; continue }
-      let px = h.cost
-      const cached = await env.PRICE_CACHE.get(`quote:${h.symbol}`, 'json') as { price: number } | null
-      if (cached) { px = cached.price }
-      else {
-        const quote = isCrypto(h.symbol)
-          ? await fetchCoinGeckoQuote(h.symbol, env.COINGECKO_KEY)
-          : await fetchFinnhubQuote(h.symbol, env.FINNHUB_KEY)
-        if (quote) px = quote.price
-      }
-      const mult = h.multiplier ?? 1
-      totalValue += h.qty * px * mult
-    }
-
-    const today = new Date().toISOString().split('T')[0]
-    await q.upsertNavSnapshot(env.DB, { snap_date: today, value: totalValue })
+  // Daily cron — write a market-value snapshot per account + aggregate.
+  // Parallelizes quote fetches to stay under Workers Free 10ms CPU when possible.
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runDailySnapshot(env))
   },
+}
+
+async function runDailySnapshot(env: Env): Promise<void> {
+  const { computeHoldings } = await import('./lib/positions')
+  const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
+
+  const [transactions, marks] = await Promise.all([
+    q.getAllTransactionsForHoldings(env.DB),
+    q.getHoldingMarks(env.DB),
+  ])
+  const holdings = computeHoldings(transactions)
+
+  // Collect symbols that need a live quote (skip CASH, options, anything already user-marked)
+  const symbolsToFetch = new Set<string>()
+  for (const h of holdings) {
+    if (h.symbol === 'CASH' || h.kind === 'option') continue
+    if (marks[h.id] != null) continue
+    symbolsToFetch.add(h.symbol)
+  }
+
+  // Fetch all quotes in parallel — KV cache first, fall back to provider
+  const priceMap: Record<string, number> = {}
+  await Promise.all([...symbolsToFetch].map(async (sym) => {
+    const cached = await env.PRICE_CACHE.get(`quote:${sym}`, 'json') as { price: number } | null
+    if (cached) { priceMap[sym] = cached.price; return }
+    const quote = isCrypto(sym)
+      ? await fetchCoinGeckoQuote(sym, env.COINGECKO_KEY)
+      : await fetchFinnhubQuote(sym, env.FINNHUB_KEY)
+    if (quote) {
+      priceMap[sym] = quote.price
+      await env.PRICE_CACHE.put(`quote:${sym}`, JSON.stringify(quote), { expirationTtl: 60 })
+    }
+  }))
+
+  // Resolve price per holding with precedence: mark > live quote > cost basis
+  function priceFor(h: typeof holdings[number]): number {
+    if (h.symbol === 'CASH') return 1
+    if (marks[h.id] != null) return marks[h.id]
+    return priceMap[h.symbol] ?? h.cost
+  }
+
+  // Sum per account, plus aggregate
+  const byAccount: Record<string, number> = {}
+  let aggregate = 0
+  for (const h of holdings) {
+    const v = h.qty * priceFor(h) * (h.multiplier ?? 1)
+    byAccount[h.account_id] = (byAccount[h.account_id] ?? 0) + v
+    aggregate += v
+  }
+
+  const today = new Date().toISOString().split('T')[0]
+  await Promise.all([
+    q.upsertNavSnapshot(env.DB, { snap_date: today, account_id: '', value: aggregate }),
+    ...Object.entries(byAccount).map(([account_id, value]) =>
+      q.upsertNavSnapshot(env.DB, { snap_date: today, account_id, value })),
+  ])
 }

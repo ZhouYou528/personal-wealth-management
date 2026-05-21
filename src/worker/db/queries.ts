@@ -96,6 +96,23 @@ export async function deleteTransaction(db: D1Database, id: string): Promise<voi
   await db.prepare('DELETE FROM transactions WHERE id = ?').bind(id).run()
 }
 
+export async function updateTransactionsBySymbol(
+  db: D1Database,
+  symbol: string,
+  patch: Partial<Pick<Transaction, 'kind'>>,
+  accountId?: string,
+): Promise<number> {
+  const fields = Object.keys(patch) as (keyof typeof patch)[]
+  if (fields.length === 0) return 0
+  const set = fields.map(f => `${f} = ?`).join(', ')
+  const values = fields.map(f => patch[f] ?? null)
+  let sql = `UPDATE transactions SET ${set} WHERE symbol = ?`
+  const binds: unknown[] = [...values, symbol]
+  if (accountId) { sql += ' AND account_id = ?'; binds.push(accountId) }
+  const result = await db.prepare(sql).bind(...binds).run()
+  return result.meta?.changes ?? 0
+}
+
 // ---------- Watchlist ----------
 
 export async function getWatchlist(db: D1Database): Promise<WatchlistItem[]> {
@@ -166,4 +183,27 @@ export async function upsertNavSnapshot(db: D1Database, snap: NavSnapshot): Prom
     INSERT INTO nav_snapshots (snap_date, account_id, value) VALUES (?, ?, ?)
     ON CONFLICT(snap_date, account_id) DO UPDATE SET value = excluded.value
   `).bind(snap.snap_date, snap.account_id ?? '', snap.value).run()
+}
+
+// ---------- Holding marks (user-set current prices) ----------
+
+export async function getHoldingMarks(db: D1Database): Promise<Record<string, number>> {
+  const { results } = await db.prepare('SELECT holding_key, price FROM holding_marks').all<{
+    holding_key: string; price: number;
+  }>()
+  const map: Record<string, number> = {}
+  for (const r of results) map[r.holding_key] = r.price
+  return map
+}
+
+export async function upsertHoldingMark(db: D1Database, holdingKey: string, price: number): Promise<void> {
+  await db.prepare(`
+    INSERT INTO holding_marks (holding_key, price, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(holding_key) DO UPDATE SET price = excluded.price, updated_at = excluded.updated_at
+  `).bind(holdingKey, price).run()
+}
+
+export async function deleteHoldingMark(db: D1Database, holdingKey: string): Promise<void> {
+  await db.prepare('DELETE FROM holding_marks WHERE holding_key = ?').bind(holdingKey).run()
 }

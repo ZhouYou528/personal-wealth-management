@@ -133,7 +133,7 @@ export function Layout() {
               onClick={() => openAddTx()}
             >
               <Plus size={14} />
-              Add transaction
+              <span className="hidden sm:inline">Add transaction</span>
             </Button>
           </div>
         </header>

@@ -24,8 +24,18 @@ app.post('/backfill', async (c) => {
     // Wipe-and-rebuild so deleted transactions don't leave stale snapshots behind
     await c.env.DB.prepare('DELETE FROM nav_snapshots WHERE account_id = ?').bind(storeId).run()
     const dates = [...new Set(txs.map(t => t.tx_date.slice(0, 10)))].sort()
+    if (dates.length === 0) return 0
+    const earliest = dates[0]
+
+    // For chart history only: pretend any transfer_in (shares brought in from another broker)
+    // was held from day-1. Otherwise the chart shows an artificial cost-basis spike on the
+    // transfer date even though the user owned the shares earlier elsewhere.
+    const virtualTxs = txs
+      .map(t => t.type === 'transfer_in' ? { ...t, tx_date: earliest } : t)
+      .sort((a, b) => a.tx_date.localeCompare(b.tx_date) || a.created_at.localeCompare(b.created_at))
+
     for (const date of dates) {
-      const upTo = txs.filter(t => t.tx_date.slice(0, 10) <= date)
+      const upTo = virtualTxs.filter(t => t.tx_date.slice(0, 10) <= date)
       const holdings = computeHoldings(upTo)
       const value = holdings.reduce((sum, h) => {
         if (h.symbol === 'CASH') return sum + h.qty

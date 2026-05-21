@@ -55,6 +55,9 @@ export const transactions = {
   create: (body: Omit<Transaction, 'id' | 'created_at'>)     => request<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
   update: (id: string, body: Partial<Transaction>)            => request<Transaction>(`/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (id: string)                                        => request<{ ok: boolean }>(`/transactions/${id}`, { method: 'DELETE' }),
+  updateBySymbol: (symbol: string, body: { kind?: 'stock'|'etf'|'option'|'crypto'|'cash'; accountId?: string }) =>
+    request<{ ok: boolean; changed: number }>(`/transactions/by-symbol/${encodeURIComponent(symbol)}`,
+      { method: 'PATCH', body: JSON.stringify(body) }),
 }
 
 // ── Holdings ────────────────────────────────────────────────
@@ -65,6 +68,12 @@ export const holdings = {
     if (accountId) qs.set('accountId', accountId)
     return request<Holding[]>(`/holdings?${qs}`)
   },
+  setMark: (id: string, price: number) =>
+    request<{ ok: boolean }>('/holdings/marks',
+      { method: 'PUT', body: JSON.stringify({ id, price }) }),
+  clearMark: (id: string) =>
+    request<{ ok: boolean }>(`/holdings/marks/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }),
 }
 
 // ── Watchlist ────────────────────────────────────────────────

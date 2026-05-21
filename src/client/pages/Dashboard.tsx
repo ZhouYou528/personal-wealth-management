@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
+import { Glyph } from '@/components/Glyph'
 import { holdings as holdingsApi, nav as navApi, accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
-import { fmtMoney, fmtDate, cn } from '@/lib/utils'
+import { fmtMoney, fmtDate, cn, todayISO, daysAgoISO } from '@/lib/utils'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -32,7 +33,7 @@ const KIND_COLOR: Record<string, string> = {
 // ── Helpers ───────────────────────────────────────────────────
 
 function daysAgoDate(days: number) {
-  return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+  return daysAgoISO(days)
 }
 
 function findSnapBefore(snaps: NavSnapshot[], targetDate: string): NavSnapshot | undefined {
@@ -73,7 +74,7 @@ function NavChart({
   range: Range
   color: string
 }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayISO()
 
   const chartData = useMemo(() => {
     const since = daysAgoDate(RANGE_DAYS[range])
@@ -229,9 +230,9 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
         </div>
       </div>
 
-      <div className="flex items-start gap-5">
+      <div className="flex flex-col sm:flex-row sm:items-start gap-5">
         {/* Donut */}
-        <div className="relative flex-shrink-0" style={{ width: 148, height: 148 }}>
+        <div className="relative flex-shrink-0 self-center sm:self-auto" style={{ width: 148, height: 148 }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -339,6 +340,7 @@ function AccountsSummary({ accounts, holdings }: { accounts: Account[]; holdings
 
 export function Dashboard() {
   const { selectedAccountId } = useStore()
+  const navigate = useNavigate()
   const [range, setRange] = useState<Range>('1M')
 
   const { data: holdingsData = [] } = useQuery({
@@ -373,7 +375,17 @@ export function Dashboard() {
     return { change, pct: (change / snap.value) * 100 }
   }
 
-  const todayChange   = periodChange(1)
+  // "Today" comes straight from live per-holding daily change (Finnhub `dp` field).
+  // Much more accurate than diffing against a cost-basis nav_snapshot from the backfill.
+  const todayDollar = holdingsData.reduce(
+    (s, h) => s + (h.change ?? 0) * h.qty * (h.multiplier ?? 1), 0,
+  )
+  const todayBaseline = currentValue - todayDollar
+  const todayChange = {
+    change: todayDollar,
+    pct: todayBaseline > 0 ? (todayDollar / todayBaseline) * 100 : 0,
+  }
+
   const weekChange    = periodChange(7)
   const monthChange   = periodChange(30)
   const yearChange    = periodChange(365)
@@ -386,16 +398,16 @@ export function Dashboard() {
   const chartColor = selectedPeriodChange.change >= 0 ? '#10B981' : '#EF4444'
 
   return (
-    <div className="p-6 space-y-4 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
 
       {/* ── Hero card ──────────────────────────────────────── */}
-      <div className="bg-surface rounded-lg border border-border px-6 pt-5 pb-5">
+      <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
 
-        {/* Top: title + range selector */}
-        <div className="flex items-start justify-between mb-3">
+        {/* Top: title + range selector — stack on mobile */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
           <div>
             <p className="text-micro text-text-3 uppercase tracking-widest mb-1">Total Net Worth</p>
-            <p className="tabular font-semibold text-[40px] leading-none tracking-tight text-text private-val">
+            <p className="tabular font-semibold text-[32px] sm:text-[40px] leading-none tracking-tight text-text private-val">
               {fmtMoney(currentValue)}
             </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
@@ -420,8 +432,8 @@ export function Dashboard() {
             </div>
           </div>
 
-          {/* Range tabs */}
-          <div className="flex items-center gap-0.5 bg-surface-2 rounded-md p-0.5 flex-shrink-0">
+          {/* Range tabs — full width on mobile */}
+          <div className="flex items-center gap-0.5 bg-surface-2 rounded-md p-0.5 self-start sm:self-auto overflow-x-auto">
             {(['1D', '1W', '1M', '3M', '1Y', 'ALL'] as Range[]).map(r => (
               <button
                 key={r}
@@ -445,8 +457,8 @@ export function Dashboard() {
           color={chartColor}
         />
 
-        {/* Period stats */}
-        <div className="grid grid-cols-4 gap-4 mt-5 pt-4 border-t border-border">
+        {/* Period stats — 2-col on mobile, 4-col from sm up */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mt-5 pt-4 border-t border-border">
           <PeriodStat label="Today" {...todayChange} />
           <PeriodStat label="Week"  {...weekChange} />
           <PeriodStat label="Month" {...monthChange} />
@@ -458,16 +470,19 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         {/* Allocation */}
-        <div className="bg-surface rounded-lg border border-border px-6 py-5">
+        <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
           <AllocationDonut holdings={holdingsData} />
         </div>
 
         {/* Accounts */}
-        <div className="bg-surface rounded-lg border border-border px-6 py-5">
+        <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
           <AccountsHeader />
           <AccountsSummary accounts={accountsList} holdings={holdingsData} />
         </div>
       </div>
+
+      {/* ── Top movers (below allocation & accounts) ───────── */}
+      <TopMovers holdings={holdingsData} onPick={(id) => navigate(`/holdings/${encodeURIComponent(id)}`)} />
     </div>
   )
 }
@@ -483,6 +498,84 @@ function AccountsHeader() {
       >
         View all <ChevronRight size={12} />
       </button>
+    </div>
+  )
+}
+
+// ── Top movers ────────────────────────────────────────────────
+
+function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: string) => void }) {
+  // Only positions with a live daily-change quote — skip cash, options without marks, etc.
+  const movable = useMemo(() => holdings
+    .filter(h => h.changePct != null && h.kind !== 'cash')
+    .map(h => {
+      const mult = h.multiplier ?? 1
+      const todayDollar = (h.change ?? 0) * h.qty * mult
+      return { ...h, todayDollar, todayPct: h.changePct as number }
+    }),
+    [holdings])
+
+  if (movable.length === 0) {
+    return (
+      <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+        <p className="text-small font-semibold text-text mb-2">Top Movers</p>
+        <p className="text-[12px] text-text-3">
+          Daily price changes will appear here after the next live quote refresh.
+        </p>
+      </div>
+    )
+  }
+
+  const gainers = [...movable].filter(m => m.todayPct > 0).sort((a, b) => b.todayPct - a.todayPct).slice(0, 5)
+  const losers  = [...movable].filter(m => m.todayPct < 0).sort((a, b) => a.todayPct - b.todayPct).slice(0, 5)
+
+  return (
+    <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-small font-semibold text-text">Top Movers</p>
+        <p className="text-[11px] text-text-3">Today's price change</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+        <MoverColumn title="Gainers" icon={<TrendingUp size={13} className="text-up" />} list={gainers} onPick={onPick} />
+        <MoverColumn title="Losers"  icon={<TrendingDown size={13} className="text-down" />} list={losers}  onPick={onPick} />
+      </div>
+    </div>
+  )
+}
+
+function MoverColumn({ title, icon, list, onPick }: {
+  title: string
+  icon: React.ReactNode
+  list: (Holding & { todayDollar: number; todayPct: number })[]
+  onPick: (id: string) => void
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-2 text-[11px] text-text-3 uppercase tracking-wider">
+        {icon} {title}
+      </div>
+      {list.length === 0 ? (
+        <p className="text-[12px] text-text-3 py-1">None today</p>
+      ) : list.map(h => (
+        <button
+          key={h.id}
+          onClick={() => onPick(h.id)}
+          className="w-full flex items-center gap-2.5 py-1.5 px-1 rounded-sm hover:bg-surface-2 transition-colors text-left"
+        >
+          <Glyph symbol={h.symbol} kind={h.kind} size="sm" />
+          <div className="flex-1 min-w-0">
+            <p className="text-small font-medium text-text truncate">{h.symbol}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className={cn('tabular text-small font-semibold private-val', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
+              {h.todayPct >= 0 ? '+' : ''}{h.todayPct.toFixed(2)}%
+            </p>
+            <p className={cn('tabular text-[11px]', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
+              {h.todayDollar >= 0 ? '+' : ''}{fmtMoney(h.todayDollar)}
+            </p>
+          </div>
+        </button>
+      ))}
     </div>
   )
 }

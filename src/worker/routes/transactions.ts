@@ -10,7 +10,8 @@ const TxSchema = z.object({
   tx_date:      z.string(),
   account_id:   z.string(),
   type:         z.enum(['buy','sell','buy_option','sell_option','buy_crypto','sell_crypto',
-                        'deposit','withdraw','transfer','dividend','interest','recurring','split']),
+                        'deposit','withdraw','transfer','transfer_in','transfer_out',
+                        'dividend','interest','recurring','split']),
   symbol:       z.string().optional(),
   kind:         z.enum(['stock','etf','option','crypto','cash']).optional(),
   qty:          z.number().nonnegative().optional(),
@@ -63,6 +64,19 @@ app.patch('/:id', zValidator('json', TxSchema.partial()), async (c) => {
 app.delete('/:id', async (c) => {
   await q.deleteTransaction(c.env.DB, c.req.param('id'))
   return c.json({ ok: true })
+})
+
+// Bulk re-classify all transactions for a symbol (optionally scoped to one account)
+app.patch('/by-symbol/:symbol', zValidator('json', z.object({
+  kind: z.enum(['stock','etf','option','crypto','cash']).optional(),
+  accountId: z.string().optional(),
+})), async (c) => {
+  const symbol = c.req.param('symbol')
+  const { kind, accountId } = c.req.valid('json')
+  const patch: { kind?: 'stock'|'etf'|'option'|'crypto'|'cash' } = {}
+  if (kind) patch.kind = kind
+  const changed = await q.updateTransactionsBySymbol(c.env.DB, symbol, patch, accountId)
+  return c.json({ ok: true, changed })
 })
 
 export default app

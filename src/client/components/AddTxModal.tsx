@@ -31,12 +31,15 @@ const TX_TYPES: Record<TxType, TxConfig> = {
   interest:     { label: 'Interest',    sub: 'Bank / bond',     color: '#06B6D4', fields: ['account','date','total','note'], kind: 'cash' },
   recurring:    { label: 'Recurring',   sub: 'Auto-invest',     color: '#7C3AED', fields: ['account','date','total','frequency'] },
   split:        { label: 'Stock Split', sub: 'Forward / reverse', color: '#7C3AED', fields: ['account','date','symbol','splitRatio','note'], kind: 'stock' },
+  transfer_in:  { label: 'Transfer In', sub: 'Shares from another broker', color: '#10B981', fields: ['account','date','symbol','qty','price','note'], kind: 'stock' },
+  transfer_out: { label: 'Transfer Out',sub: 'Shares to another broker',   color: '#A1A1AA', fields: ['account','date','symbol','qty','note'],          kind: 'stock' },
 }
 
 const TYPE_GRID = [
   'buy','sell','buy_option','sell_option',
   'buy_crypto','sell_crypto','deposit','withdraw',
-  'transfer','dividend','interest','split',
+  'transfer','transfer_in','transfer_out','dividend',
+  'interest','split',
 ] as TxType[]
 
 export function AddTxModal() {
@@ -145,8 +148,9 @@ export function AddTxModal() {
     }
   }, [addTxOpen, addTxPrefill, editTx, accs])
 
-  // Auto-compute total for trades
+  // Auto-compute total for trades (skip when type doesn't use a total — e.g. transfer_in)
   useEffect(() => {
+    if (!TX_TYPES[type].fields.includes('total')) return
     const q = parseFloat(qty)
     const p = parseFloat(price)
     if (!isNaN(q) && !isNaN(p)) {
@@ -165,6 +169,7 @@ export function AddTxModal() {
   function handleSubmit() {
     const cfg = TX_TYPES[type]
     const isSplit = type === 'split'
+    const isShareTransfer = type === 'transfer_in' || type === 'transfer_out'
     const body = {
       tx_date: date, type,
       account_id: accountId || accs[0]?.id,
@@ -172,7 +177,7 @@ export function AddTxModal() {
       kind: cfg.kind,
       qty: isSplit ? Number(splitNew) : qty ? Number(qty) : undefined,
       price: isSplit ? Number(splitOld) : price ? Number(price) : undefined,
-      total: isSplit ? 0 : Number(total),
+      total: (isSplit || isShareTransfer) ? 0 : Number(total),
       note: note || undefined,
       to_account: toAccountId || undefined,
       from_account: fromAccountId || undefined,
@@ -198,8 +203,8 @@ export function AddTxModal() {
     <Dialog.Root open={addTxOpen} onOpenChange={(o) => !o && handleClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl">
-          <div className="modal-pop bg-surface rounded-lg shadow-lg max-h-[90vh] overflow-y-auto">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100vw-1rem)] max-w-2xl">
+          <div className="modal-pop bg-surface rounded-lg shadow-lg max-h-[92vh] overflow-y-auto">
           <div className="flex items-center justify-between p-5 border-b border-border">
             <Dialog.Title className="text-section-h2 text-text">
               {isEdit ? `Edit ${cfg.label}` : step === 'pick' ? 'Add Transaction' : cfg.label}
@@ -211,7 +216,7 @@ export function AddTxModal() {
 
           {step === 'pick' && !isEdit ? (
             <div className="p-5">
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {TYPE_GRID.map(t => {
                   const c = TX_TYPES[t]
                   return (
@@ -371,19 +376,29 @@ export function AddTxModal() {
                 </div>
               )}
 
-              {(fields.includes('qty') || fields.includes('price')) && (
-                <div className="grid grid-cols-3 gap-4">
-                  <Field label="Quantity">
-                    <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="10" className="field-input" />
-                  </Field>
-                  <Field label="Price">
-                    <input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" className="field-input" />
-                  </Field>
-                  <Field label="Total">
-                    <input type="number" value={total} onChange={e => setTotal(e.target.value)} placeholder="0.00" className="field-input" />
-                  </Field>
-                </div>
-              )}
+              {(fields.includes('qty') || fields.includes('price')) && (() => {
+                const showPrice = fields.includes('price')
+                const showTotal = fields.includes('total')
+                const cols = 1 + (showPrice ? 1 : 0) + (showTotal ? 1 : 0)
+                const priceLabel = type === 'transfer_in' ? 'Cost basis / share' : 'Price'
+                return (
+                  <div className={`grid gap-4 ${cols === 3 ? 'grid-cols-3' : cols === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    <Field label="Quantity">
+                      <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="10" className="field-input" />
+                    </Field>
+                    {showPrice && (
+                      <Field label={priceLabel}>
+                        <input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" className="field-input" />
+                      </Field>
+                    )}
+                    {showTotal && (
+                      <Field label="Total">
+                        <input type="number" value={total} onChange={e => setTotal(e.target.value)} placeholder="0.00" className="field-input" />
+                      </Field>
+                    )}
+                  </div>
+                )
+              })()}
 
               {!fields.includes('qty') && fields.includes('total') && (
                 <Field label="Amount">
@@ -404,7 +419,11 @@ export function AddTxModal() {
                     mutation.isPending ||
                     (type === 'split'
                       ? !symbol || !Number(splitNew) || !Number(splitOld)
-                      : !total)
+                      : type === 'transfer_in'
+                        ? !symbol || !Number(qty)
+                        : type === 'transfer_out'
+                          ? !symbol || !Number(qty)
+                          : !total)
                   }
                   onClick={handleSubmit}
                 >

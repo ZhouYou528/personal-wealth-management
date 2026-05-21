@@ -21,6 +21,7 @@ export type TxType =
   | 'buy_crypto' | 'sell_crypto'
   | 'deposit' | 'withdraw'
   | 'transfer'
+  | 'transfer_in' | 'transfer_out'
   | 'dividend' | 'interest'
   | 'recurring'
   | 'split'
@@ -56,6 +57,9 @@ export interface Holding {
   qty: number
   cost: number        // weighted-average cost per unit
   px: number          // last market price (from cache or fallback = cost)
+  change?: number     // today's absolute price change (live quote only)
+  changePct?: number  // today's % change (live quote only)
+  marked?: boolean    // true when px comes from a user-set mark (not a live quote)
   option_type?: 'call' | 'put'
   strike?: number
   expiry?: string

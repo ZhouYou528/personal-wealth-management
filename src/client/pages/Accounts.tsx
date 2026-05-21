@@ -133,7 +133,7 @@ export function Accounts() {
   })
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-8 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-page-title text-text">Accounts</h1>
         <Button onClick={() => setAddOpen(true)}>

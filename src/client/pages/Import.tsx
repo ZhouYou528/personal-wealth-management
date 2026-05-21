@@ -63,11 +63,29 @@ interface MappedTx {
   price?: number
   total: number
   note?: string
+  option_type?: 'call' | 'put'
+  strike?: number
+  expiry?: string
+  underlying?: string
   // meta
   _label: string
   _skip: boolean
   _skipReason?: string
   _warn?: string
+}
+
+// "AAPL 1/19/2024 Call $150.00" → { underlying, expiry, type, strike }
+function parseOptionDesc(desc: string): {
+  underlying: string; expiry: string; option_type: 'call' | 'put'; strike: number
+} | null {
+  const m = desc.match(/^([A-Z.]+)\s+(\d+\/\d+\/\d+)\s+(Call|Put)\s+\$([\d,]+\.?\d*)/i)
+  if (!m) return null
+  return {
+    underlying: m[1].toUpperCase(),
+    expiry:     parseRHDate(m[2]),
+    option_type: m[3].toLowerCase() as 'call' | 'put',
+    strike:     parseFloat(m[4].replace(/,/g, '')),
+  }
 }
 
 const ETF_SYMBOLS = new Set([
@@ -91,7 +109,52 @@ function mapRow(cols: string[]): MappedTx | null {
   // Clean description: take first line, strip CUSIP line
   const note = description?.split('\n')[0]?.trim() || undefined
 
-  switch (transCode.trim()) {
+  const code = transCode.trim()
+  // ── Options: BTO/STO/BTC/STC/OEXP/OASGN/OEXR ──
+  // Robinhood description holds the contract spec; treat Instrument as the underlying ticker
+  const optionCodes = new Set(['BTO','STO','BTC','STC','OEXP','OASGN','OEXR'])
+  if (optionCodes.has(code)) {
+    const parsed = description ? parseOptionDesc(description) : null
+    if (!parsed) {
+      return { tx_date, type: 'buy_option', total: Math.abs(amount), note,
+        _label: code, _skip: true, _skipReason: 'Could not parse option description' }
+    }
+    const optBase = {
+      tx_date,
+      symbol: parsed.underlying,
+      kind: 'option' as AssetKind,
+      qty,
+      option_type: parsed.option_type,
+      strike: parsed.strike,
+      expiry: parsed.expiry,
+      underlying: parsed.underlying,
+      note,
+    }
+    switch (code) {
+      case 'BTO': // Buy to open — long position
+        return { ...optBase, type: 'buy_option', price, total: Math.abs(amount),
+          _label: 'Buy to Open', _skip: false }
+      case 'STC': // Sell to close — exit long
+        return { ...optBase, type: 'sell_option', price, total: Math.abs(amount),
+          _label: 'Sell to Close', _skip: false }
+      case 'STO': // Sell to open — short (premium received)
+        return { ...optBase, type: 'sell_option', price, total: Math.abs(amount),
+          _label: 'Sell to Open', _skip: false }
+      case 'BTC': // Buy to close — cover short
+        return { ...optBase, type: 'buy_option', price, total: Math.abs(amount),
+          _label: 'Buy to Close', _skip: false }
+      case 'OEXP': // Expired worthless
+        return { ...optBase, type: 'sell_option', price: 0, total: 0,
+          _label: 'Expired', _skip: false }
+      case 'OASGN':
+      case 'OEXR':
+        return { ...optBase, type: 'sell_option', price: 0, total: Math.abs(amount),
+          _label: code === 'OASGN' ? 'Assigned' : 'Exercised',
+          _skip: true, _skipReason: `${code === 'OASGN' ? 'Assignment' : 'Exercise'} — record resulting stock trade manually` }
+    }
+  }
+
+  switch (code) {
     case 'Buy':
       return { tx_date, type: 'buy', symbol, kind, qty, price,
         total: Math.abs(amount), note, _label: 'Buy', _skip: false }
@@ -101,14 +164,14 @@ function mapRow(cols: string[]): MappedTx | null {
         total: Math.abs(amount), note, _label: 'Sell', _skip: false }
 
     case 'ACATI': {
-      // ACAT transfer in — no price/amount available
+      // ACAT transfer in — shares moved in from another broker; no cash effect
       const hasQty = qty != null && qty > 0
       return {
-        tx_date, type: 'buy', symbol, kind, qty, price: 0, total: 0,
+        tx_date, type: 'transfer_in', symbol, kind, qty, price: 0, total: 0,
         note: 'ACAT Transfer In — update cost basis',
         _label: 'ACAT In', _skip: !hasQty,
         _skipReason: hasQty ? undefined : 'No quantity',
-        _warn: hasQty ? 'Price/cost is $0 — edit after import' : undefined,
+        _warn: hasQty ? 'Cost basis is $0 — edit after import' : undefined,
       }
     }
 
@@ -187,11 +250,19 @@ export function Import() {
     gcTime: 0,
   })
 
+  function fingerprint(tx: {
+    tx_date: string; type: string; symbol?: string; total: number;
+    option_type?: 'call' | 'put'; strike?: number; expiry?: string;
+  }) {
+    const opt = (tx.type === 'buy_option' || tx.type === 'sell_option')
+      ? `|${tx.option_type ?? ''}|${tx.strike ?? ''}|${tx.expiry ?? ''}`
+      : ''
+    return `${tx.tx_date}|${tx.type}|${tx.symbol ?? ''}|${Math.abs(tx.total).toFixed(2)}${opt}`
+  }
+
   const existingFingerprints = useMemo(() => {
     const set = new Set<string>()
-    for (const tx of existingTxs) {
-      set.add(`${tx.tx_date}|${tx.type}|${tx.symbol ?? ''}|${Math.abs(tx.total).toFixed(2)}`)
-    }
+    for (const tx of existingTxs) set.add(fingerprint(tx))
     return set
   }, [existingTxs])
 
@@ -199,8 +270,7 @@ export function Import() {
     if (!rows.length) return rows
     return rows.map(r => {
       if (r._skip) return r
-      const fp = `${r.tx_date}|${r.type}|${r.symbol ?? ''}|${Math.abs(r.total).toFixed(2)}`
-      if (existingFingerprints.has(fp)) return { ...r, _skip: true, _skipReason: 'Duplicate' }
+      if (existingFingerprints.has(fingerprint(r))) return { ...r, _skip: true, _skipReason: 'Duplicate' }
       return r
     })
   }, [rows, existingFingerprints])
@@ -265,6 +335,10 @@ export function Import() {
           price: r.price,
           total: r.total,
           note: r.note,
+          option_type: r.option_type,
+          strike: r.strike,
+          expiry: r.expiry,
+          underlying: r.underlying,
         })
         ok++
       } catch (e) {
@@ -297,7 +371,7 @@ export function Import() {
   // ── Done state ──────────────────────────────────────────────────────────────
   if (done) {
     return (
-      <div className="p-8 max-w-2xl mx-auto space-y-5 mt-8">
+      <div className="p-4 sm:p-8 max-w-2xl mx-auto space-y-5 mt-4 sm:mt-8">
         <div className="text-center space-y-3">
           <CheckCircle size={48} className="text-up mx-auto" />
           <h1 className="text-page-title text-text">Import Complete</h1>
@@ -354,7 +428,7 @@ export function Import() {
   }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-8 max-w-5xl mx-auto">
       <h1 className="text-page-title text-text mb-1">Import Transactions</h1>
       <p className="text-small text-text-3 mb-4">Import from your broker's CSV export. Select the format below, then drop your file.</p>
 
@@ -411,7 +485,7 @@ export function Import() {
       {rows.length > 0 && (
         <div className="space-y-4">
           {/* Summary bar */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: 'Total rows',  value: rowsWithDedup.length, color: 'text-text' },
               { label: 'To import',   value: toImport.length,      color: 'text-up' },
@@ -491,8 +565,8 @@ export function Import() {
           </div>
 
           {/* Table */}
-          <div className="bg-surface border border-border rounded-md overflow-hidden">
-            <table className="w-full text-small">
+          <div className="bg-surface border border-border rounded-md overflow-x-auto">
+            <table className="w-full text-small min-w-[640px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left px-4 py-3 text-micro text-text-3 uppercase tracking-wider">Date</th>

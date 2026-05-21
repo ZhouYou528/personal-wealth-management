@@ -5,7 +5,7 @@ import { transactions as txApi, accounts as accountsApi, nav as navApi } from '@
 import { useStore } from '@/lib/store'
 import { Glyph } from '@/components/Glyph'
 import { Button } from '@/components/ui/button'
-import { fmtMoney, fmtQty, fmtDate } from '@/lib/utils'
+import { fmtMoney, fmtQty, fmtDate, fmtOptionLabel, todayISO, daysAgoISO } from '@/lib/utils'
 import type { Transaction } from '@shared/types'
 
 const TX_GROUPS: Record<string, { label: string; color: string }> = {
@@ -18,6 +18,8 @@ const TX_GROUPS: Record<string, { label: string; color: string }> = {
   deposit:      { label: 'Deposit',      color: '#10B981' },
   withdraw:     { label: 'Withdraw',     color: '#EF4444' },
   transfer:     { label: 'Transfer',     color: '#6B7280' },
+  transfer_in:  { label: 'Transfer In',  color: '#10B981' },
+  transfer_out: { label: 'Transfer Out', color: '#A1A1AA' },
   dividend:     { label: 'Dividend',     color: '#06B6D4' },
   interest:     { label: 'Interest',     color: '#06B6D4' },
   recurring:    { label: 'Recurring',    color: '#7C3AED' },
@@ -36,10 +38,8 @@ function groupByDay(txs: Transaction[]): [string, Transaction[]][] {
 }
 
 function dayLabel(iso: string): string {
-  const today = new Date().toISOString().slice(0, 10)
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
-  if (iso === today) return 'Today'
-  if (iso === yesterday) return 'Yesterday'
+  if (iso === todayISO()) return 'Today'
+  if (iso === daysAgoISO(1)) return 'Yesterday'
   return fmtDate(iso)
 }
 
@@ -89,7 +89,7 @@ export function Transactions() {
   const groups = groupByDay(filtered)
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-4 sm:p-8 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-page-title text-text">Transactions</h1>
@@ -136,10 +136,20 @@ export function Transactions() {
                           <span className="text-small font-medium" style={{ color: meta?.color }}>
                             {meta?.label}
                           </span>
-                          {tx.symbol && <span className="text-small text-text font-medium">{tx.symbol}</span>}
+                          {tx.symbol && (
+                            <span className="text-small text-text font-medium">
+                              {(tx.type === 'buy_option' || tx.type === 'sell_option')
+                                ? fmtOptionLabel(tx)
+                                : tx.symbol}
+                            </span>
+                          )}
                           {tx.type === 'split' && tx.qty && tx.price ? (
                             <span className="text-[11px] text-text-3 tabular">
                               {tx.qty}:{tx.price} ratio
+                            </span>
+                          ) : tx.type === 'transfer_out' && tx.qty ? (
+                            <span className="text-[11px] text-text-3">
+                              {fmtQty(tx.qty)} shares
                             </span>
                           ) : tx.qty ? (
                             <span className="text-[11px] text-text-3">
@@ -151,7 +161,7 @@ export function Transactions() {
                       </div>
 
                       {accMap[tx.account_id] && (
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <div className="hidden sm:flex items-center gap-1.5 flex-shrink-0">
                           <span className="w-2 h-2 rounded-full" style={{ background: accMap[tx.account_id].color }} />
                           <span className="text-[11px] text-text-3 whitespace-nowrap">
                             {accMap[tx.account_id].institution} · {accMap[tx.account_id].type}
@@ -159,10 +169,12 @@ export function Transactions() {
                         </div>
                       )}
                       <span className="tabular text-small font-medium text-text private-val flex-shrink-0">
-                        {tx.type === 'split' ? '—' : fmtMoney(Math.abs(tx.total))}
+                        {tx.type === 'split' || tx.type === 'transfer_in' || tx.type === 'transfer_out'
+                          ? '—' : fmtMoney(Math.abs(tx.total))}
                       </span>
 
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Edit/delete: always visible on touch, hover-only on desktop */}
+                      <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                         <Button variant="ghost" size="icon"
                           onClick={() => openEditTx(tx)}>
                           <Pencil size={13} />

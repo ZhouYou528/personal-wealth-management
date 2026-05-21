@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS events (
   note       TEXT
 );
 
+-- User-set "mark to market" prices for illiquid holdings (e.g. options).
+-- Keyed by the holding id produced by computeHoldings:
+--   stock/etf/crypto: "${account_id}:${symbol}"
+--   option:           "${account_id}:${symbol}:${type}:${strike}:${expiry}"
+CREATE TABLE IF NOT EXISTS holding_marks (
+  holding_key TEXT PRIMARY KEY,
+  price       REAL NOT NULL,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS nav_snapshots (
   snap_date  TEXT NOT NULL,
   account_id TEXT NOT NULL DEFAULT '',

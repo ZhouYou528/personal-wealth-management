@@ -48,12 +48,19 @@ export function fmtQty(value: number): string {
   return value % 1 === 0 ? String(value) : value.toFixed(4).replace(/\.?0+$/, '')
 }
 
+// ISO date strings ("YYYY-MM-DD") are calendar dates — parse them as LOCAL dates,
+// not as UTC midnight, otherwise users east of UTC see them shift by a day.
+function parseISODateLocal(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, (m ?? 1) - 1, d ?? 1)
+}
+
 export function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })
+  return parseISODateLocal(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export function fmtDateShort(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
+  return parseISODateLocal(iso).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' })
 }
 
 // ── Asset colours ────────────────────────────────────────────
@@ -77,5 +84,38 @@ export function nanoid(len = 10): string {
 }
 
 export function todayISO(): string {
-  return new Date().toISOString().split('T')[0]
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** "YYYY-MM-DD" in local time, N days before today. */
+export function daysAgoISO(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// ── Option helpers ─────────────────────────────────────────────
+
+/** "AAPL 150C 3/15/24" — compact contract label */
+export function fmtOptionLabel(o: {
+  symbol: string
+  option_type?: 'call' | 'put'
+  strike?: number
+  expiry?: string
+}): string {
+  const cp = o.option_type === 'put' ? 'P' : 'C'
+  const strike = o.strike != null ? `${o.strike}${cp}` : cp
+  if (!o.expiry) return `${o.symbol} ${strike}`
+  const d = new Date(o.expiry)
+  const date = `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`
+  return `${o.symbol} ${strike} ${date}`
+}
+
+/** Days to expiry. Negative = expired. Treats expiry as a local-date end-of-day. */
+export function daysToExpiry(expiry?: string): number | null {
+  if (!expiry) return null
+  const [y, m, d] = expiry.split('-').map(Number)
+  const dt = new Date(y, (m ?? 1) - 1, d ?? 1, 23, 59, 59, 999)
+  return Math.ceil((dt.getTime() - Date.now()) / 86400000)
 }

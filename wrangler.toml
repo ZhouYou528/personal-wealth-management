@@ -32,3 +32,8 @@ preview_id = "0f994a5e772446369d7f51ce9b8fdac0"
 [vars]
 # Non-secret vars (overridden by secrets in production)
 ENVIRONMENT = "development"
+
+# --- Cron triggers ---
+# 22:00 UTC daily (~6pm ET / ~3pm PT) — ~2h after US market close so prices have settled.
+[triggers]
+crons = ["0 22 * * *"]

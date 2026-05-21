@@ -85,8 +85,9 @@
 
 /* ── Privacy mode ────────────────────────────────────────────── */
 .private .private-val {
-  filter: blur(6px);
+  filter: blur(10px);
   transition: filter 150ms;
+  user-select: none;
 }
 
 /* ── Status pulse dot ────────────────────────────────────────── */
