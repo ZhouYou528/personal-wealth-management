@@ -10,6 +10,7 @@ import marketRoutes       from './routes/market'
 import navRoutes          from './routes/nav'
 import fxRoutes           from './routes/fx'
 import recurringRoutes    from './routes/recurring'
+import allocationRoutes   from './routes/allocation'
 import * as q             from './db/queries'
 
 const api = new Hono<{ Bindings: Env }>()
@@ -23,6 +24,7 @@ const api = new Hono<{ Bindings: Env }>()
   .route('/nav',          navRoutes)
   .route('/fx',           fxRoutes)
   .route('/recurring',    recurringRoutes)
+  .route('/allocation',   allocationRoutes)
 
 // GET /api/events — upcoming calendar events
 api.get('/events', async (c) => {

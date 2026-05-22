@@ -87,6 +87,18 @@ export interface Goal {
   created_at: string
 }
 
+export type AllocationTargets = Partial<Record<AssetKind, number>>
+
+export interface AllocationPlan {
+  id: string
+  name: string
+  scope_account_ids?: string[]    // null/empty = all accounts
+  targets: AllocationTargets      // % per kind, should sum to 100
+  drift_threshold: number         // absolute drift % at which to flag rebalance
+  active: number
+  created_at: string
+}
+
 export type RecurringFrequency = 'biweekly' | 'monthly' | 'quarterly'
 
 export interface RecurringRule {

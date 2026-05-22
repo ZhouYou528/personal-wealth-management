@@ -53,6 +53,20 @@ CREATE TABLE IF NOT EXISTS goals (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Target allocation plans. User defines target percentages per asset kind
+-- (stock/etf/mutual_fund/option/crypto/cash) and a scope (all accounts or a
+-- specific subset). The app then surfaces drift between actual & target and
+-- suggests rebalancing trades.
+CREATE TABLE IF NOT EXISTS allocation_plans (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  scope_account_ids TEXT,                                   -- JSON array; null/empty = all
+  targets           TEXT NOT NULL,                          -- JSON: { stock: 70, etf: 20, ... }
+  drift_threshold   REAL NOT NULL DEFAULT 5,                -- absolute % drift to flag
+  active            INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Recurring transaction rules. The daily cron walks active rules and creates
 -- real transactions when their schedule fires (catching up if the cron was
 -- offline or the start_date is backdated). `last_fired` is the date most

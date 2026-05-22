@@ -127,6 +127,20 @@ export const recurring = {
     request<{ ok: boolean; result: { rule_id: string; fired: string[] }[] }>(`/recurring/run-all`, { method: 'POST' }),
 }
 
+// ── Allocation plans ────────────────────────────────────────
+
+import type { AllocationPlan } from '@shared/types'
+
+export const allocation = {
+  list:   ()                                                                  => request<AllocationPlan[]>('/allocation'),
+  create: (body: Omit<AllocationPlan, 'id' | 'created_at' | 'active'> & { active?: number }) =>
+    request<{ ok: boolean; id: string }>('/allocation', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<AllocationPlan>) =>
+    request<{ ok: boolean }>(`/allocation/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string) =>
+    request<{ ok: boolean }>(`/allocation/${id}`, { method: 'DELETE' }),
+}
+
 // ── FX ───────────────────────────────────────────────────────
 
 export interface FxResponse { base: string; date: string; rates: Record<string, number>; stale?: boolean }
