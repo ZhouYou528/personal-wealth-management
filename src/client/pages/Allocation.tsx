@@ -140,12 +140,60 @@ export function Allocation() {
 
 // ── Drift detail card ─────────────────────────────────────────────────────
 
+type DriftMetric = {
+  label: string
+  render: (r: NonNullable<ReturnType<typeof computeAllocationDrift>>['rows'][number], fmt: (v: number) => string) => React.ReactNode
+}
+
+const DRIFT_METRICS: DriftMetric[] = [
+  {
+    label: 'Current',
+    render: (r, fmt) => (
+      <div className="text-right">
+        <div className="tabular text-small font-semibold text-text">{r.current_pct.toFixed(1)}%</div>
+        <div className="tabular text-[11px] text-text-3 private-val">{fmt(r.current_value)}</div>
+      </div>
+    ),
+  },
+  {
+    label: 'Target',
+    render: (r, fmt) => (
+      <div className="text-right">
+        <div className="tabular text-small font-semibold text-text">{r.target_pct.toFixed(1)}%</div>
+        <div className="tabular text-[11px] text-text-3 private-val">{fmt(r.target_value)}</div>
+      </div>
+    ),
+  },
+  {
+    label: 'Drift',
+    render: (r) => (
+      <span className={cn('tabular text-small font-semibold', r.out_of_range ? 'text-warn' : 'text-text-3')}>
+        {r.drift_pct >= 0 ? '+' : ''}{r.drift_pct.toFixed(1)}%
+      </span>
+    ),
+  },
+  {
+    label: 'Rebalance',
+    render: (r, fmt) => {
+      const overweight = r.delta_value > 0
+      if (Math.abs(r.delta_value) < 0.01) return <span className="text-small text-text-3">—</span>
+      return (
+        <span className={cn('tabular text-small font-semibold private-val', overweight ? 'text-down' : 'text-up')}>
+          {overweight ? `Sell ${fmt(Math.abs(r.delta_value))}` : `Buy ${fmt(Math.abs(r.delta_value))}`}
+        </span>
+      )
+    },
+  },
+]
+
 function PlanDetail({ plan, drift, scopedAccountNames, fmt }: {
   plan: AllocationPlan
   drift: NonNullable<ReturnType<typeof computeAllocationDrift>>
   scopedAccountNames?: string[]
   fmt: (v: number) => string
 }) {
+  const [mobileMetricIdx, setMobileMetricIdx] = useState(0)
+  const mobileMetric = DRIFT_METRICS[mobileMetricIdx]
   const flagged = drift.rows.filter(r => r.out_of_range)
   const inScopeText = !plan.scope_account_ids || plan.scope_account_ids.length === 0
     ? 'All accounts'
@@ -153,7 +201,7 @@ function PlanDetail({ plan, drift, scopedAccountNames, fmt }: {
 
   return (
     <div className="space-y-4">
-      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5">
         <div className="flex items-baseline justify-between mb-2">
           <h2 className="text-section-h2 text-text">{plan.name}</h2>
           <p className="text-[11px] text-text-3 tabular">
@@ -176,7 +224,7 @@ function PlanDetail({ plan, drift, scopedAccountNames, fmt }: {
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-small min-w-[640px]">
             <thead>
               <tr className="border-b border-border text-left">
@@ -229,6 +277,41 @@ function PlanDetail({ plan, drift, scopedAccountNames, fmt }: {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* ── Mobile card list ─────────────────────────────── */}
+        <div className="sm:hidden border-t border-border">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+            <span className="text-micro text-text-3 uppercase tracking-wider">Kind</span>
+            <button
+              onClick={() => setMobileMetricIdx(i => (i + 1) % DRIFT_METRICS.length)}
+              className="text-micro text-text-3 uppercase tracking-wider font-medium flex items-center gap-1 active:opacity-60"
+            >
+              {mobileMetric.label} ›
+            </button>
+          </div>
+          <div className="divide-y divide-border">
+            {drift.rows.map(r => {
+              const color = KIND_COLOR[r.kind] ?? '#A1A1AA'
+              return (
+                <div
+                  key={r.kind}
+                  className={cn('flex items-center gap-3 px-4 py-3', r.out_of_range && 'bg-warn/5')}
+                >
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                  <span className="text-small font-medium text-text flex-1">{KIND_LABEL[r.kind] ?? r.kind}</span>
+                  {r.out_of_range && <AlertTriangle size={12} className="text-warn flex-shrink-0" />}
+                  <div
+                    className="flex-shrink-0"
+                    onClick={() => setMobileMetricIdx(i => (i + 1) % DRIFT_METRICS.length)}
+                  >
+                    {mobileMetric.render(r, fmt)}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
 
         <p className="text-[11px] text-text-3 mt-4">

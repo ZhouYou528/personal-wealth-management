@@ -228,7 +228,7 @@ export function Holdings() {
       ) : (
         <>
           {/* ── Desktop table ──────────────────────────────────────── */}
-          <div className="hidden sm:block bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border overflow-x-auto">
+          <div className="hidden sm:block bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush overflow-x-auto">
             <table className="w-full text-small min-w-[760px]">
               <thead>
                 <tr className="border-b border-border">
@@ -333,7 +333,7 @@ export function Holdings() {
           </div>
 
           {/* ── Mobile list ───────────────────────────────────────── */}
-          <div className="sm:hidden bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border">
+          <div className="sm:hidden bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush">
             {/* Header — tap left to sort by symbol, tap right to sort by current metric */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-border">
               <button

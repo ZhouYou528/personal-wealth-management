@@ -227,7 +227,7 @@ export function Goals() {
           const deadlineText = monthsLeft < 0 ? `Past · ${fmtDate(goal.deadline)}` : fmtDate(goal.deadline)
 
           return (
-            <div key={goal.id} className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
+            <div key={goal.id} className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <span className="text-[22px]">{goal.icon}</span>

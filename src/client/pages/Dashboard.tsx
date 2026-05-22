@@ -246,15 +246,15 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
 
       <div className="flex items-start gap-5">
         {/* Donut */}
-        <div className="relative flex-shrink-0" style={{ width: 148, height: 148 }}>
+        <div className="relative flex-shrink-0" style={{ width: 200, height: 200 }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={slices}
                 cx="50%"
                 cy="50%"
-                innerRadius={46}
-                outerRadius={68}
+                innerRadius={62}
+                outerRadius={90}
                 dataKey="val"
                 strokeWidth={2}
                 stroke="hsl(var(--surface))"
@@ -275,8 +275,8 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
             </PieChart>
           </ResponsiveContainer>
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <p className="text-[9px] text-text-3 uppercase tracking-widest">TOTAL</p>
-            <p className="text-[13px] font-bold text-text private-val tabular">{fmtCompact(total)}</p>
+            <p className="text-[10px] text-text-3 uppercase tracking-widest">TOTAL</p>
+            <p className="text-[15px] font-bold text-text private-val tabular">{fmtCompact(total)}</p>
           </div>
         </div>
 
@@ -446,7 +446,7 @@ export function Dashboard() {
       )}
 
       {/* ── Hero card ──────────────────────────────────────── */}
-      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
 
         {/* Top: title + range selector — stack on mobile */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
@@ -523,12 +523,12 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         {/* Allocation */}
-        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
+        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
           <AllocationDonut holdings={holdingsData} />
         </div>
 
         {/* Accounts */}
-        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
+        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
           <AccountsHeader />
           <AccountsSummary accounts={accountsList} holdings={holdingsData} />
         </div>
@@ -596,7 +596,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
 
   if (movable.length === 0) {
     return (
-      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
         <p className="text-small font-semibold text-text mb-2">Top Movers</p>
         <p className="text-[12px] text-text-3">
           Daily price changes will appear here after the next live quote refresh.
@@ -609,7 +609,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
   const losers  = [...movable].filter(m => m.todayPct < 0).sort((a, b) => a.todayPct - b.todayPct).slice(0, 5)
 
   return (
-    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
+    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-small font-semibold text-text">Top Movers</p>
         <p className="text-[11px] text-text-3">Today's price change</p>

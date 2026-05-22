@@ -11,7 +11,7 @@ export function Card({ children, className, padding = 'default', onClick }: Card
   return (
     <div
       className={cn(
-        'bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border',
+        'bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush',
         padding === 'default' && 'p-5',
         padding === 'hero'    && 'p-7',
         padding === 'none'    && '',

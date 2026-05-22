@@ -189,7 +189,7 @@ export function Transactions() {
 
       {/* Filters panel */}
       {filtersOpen && (
-        <div className="mb-4 p-4 bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border">
+        <div className="mb-4 p-4 bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <FilterCell label="From">
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="field-input w-full" />
@@ -240,7 +240,7 @@ export function Transactions() {
           {groups.map(([day, txs]) => (
             <div key={day}>
               <p className="text-micro text-text-3 uppercase tracking-wider mb-2">{dayLabel(day)}</p>
-              <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border divide-y divide-border">
+              <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush divide-y divide-border">
                 {txs.map(tx => {
                   const meta = TX_GROUPS[tx.type]
                   return (

@@ -188,7 +188,7 @@ export function Accounts() {
         {accs.map(acc => (
           <div
             key={acc.id}
-            className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
+            className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
           >
             {editingId !== acc.id && (
               <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
