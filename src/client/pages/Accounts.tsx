@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, Pencil, Plus, Trash2, X } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { accounts as accountsApi } from '@/lib/api'
+import { accounts as accountsApi, holdings as holdingsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { AccountTypeBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useMoney } from '@/lib/money'
+import { cn } from '@/lib/utils'
 
 import type { AccountType } from '@shared/types'
 
@@ -117,6 +119,7 @@ function AddAccountModal({ open, onClose }: { open: boolean; onClose: () => void
 export function Accounts() {
   const { selectedAccountId, setSelectedAccountId } = useStore()
   const qc = useQueryClient()
+  const { fmt } = useMoney()
   const [addOpen, setAddOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
@@ -125,6 +128,22 @@ export function Accounts() {
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
   })
+
+  const { data: allHoldings = [] } = useQuery({
+    queryKey: ['holdings', null],
+    queryFn: () => holdingsApi.list(undefined),
+  })
+
+  const valueByAccount = useMemo(() => {
+    const m: Record<string, { value: number; pnl: number }> = {}
+    for (const acc of accs) {
+      const ah = allHoldings.filter(h => h.account_id === acc.id)
+      const value = ah.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
+      const cost  = ah.reduce((s, h) => s + h.qty * h.cost * (h.multiplier ?? 1), 0)
+      m[acc.id] = { value, pnl: value - cost }
+    }
+    return m
+  }, [allHoldings, accs])
 
   const deleteMutation = useMutation({
     mutationFn: accountsApi.delete,
@@ -169,7 +188,7 @@ export function Accounts() {
         {accs.map(acc => (
           <div
             key={acc.id}
-            className="group relative bg-surface rounded-md border border-border p-5 hover:border-border-strong transition-colors"
+            className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
           >
             {editingId !== acc.id && (
               <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -236,13 +255,30 @@ export function Accounts() {
             </div>
             <div className="flex items-center justify-between">
               <span
-                className="text-[11px] px-2 py-0.5 rounded-sm"
+                className="text-[11px] px-2 py-0.5 rounded-full"
                 style={{ background: `${acc.color}20`, color: acc.color }}
               >
                 {acc.type}
               </span>
               <span className="text-[11px] text-text-3 tabular">{acc.number}</span>
             </div>
+
+            {/* Portfolio value */}
+            {(valueByAccount[acc.id]?.value ?? 0) > 0.01 && (
+              <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between">
+                <span className="text-[11px] text-text-3">Portfolio value</span>
+                <div className="text-right">
+                  <p className="tabular text-small font-semibold text-text private-val">
+                    {fmt(valueByAccount[acc.id].value)}
+                  </p>
+                  <p className={cn('tabular text-[11px]', valueByAccount[acc.id].pnl >= 0 ? 'text-up' : 'text-down')}>
+                    <span className="private-val">
+                      {valueByAccount[acc.id].pnl >= 0 ? '+' : ''}{fmt(valueByAccount[acc.id].pnl)}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         ))}
 

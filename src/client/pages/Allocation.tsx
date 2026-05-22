@@ -71,7 +71,7 @@ export function Allocation() {
       </div>
 
       {plans.length === 0 ? (
-        <div className="border border-dashed border-border rounded-md p-12 text-center">
+        <div className="border-2 border-dashed border-border rounded-2xl p-12 text-center">
           <Target size={28} className="text-text-3 mx-auto mb-2" />
           <p className="text-text-2 text-small">No allocation plans yet.</p>
           <p className="text-text-3 text-[12px] mt-1">
@@ -87,7 +87,7 @@ export function Allocation() {
                 key={p.id}
                 onClick={() => setSelectedId(p.id)}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[12.5px] font-medium transition-colors',
+                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150',
                   (activePlan?.id === p.id)
                     ? 'bg-accent-soft text-accent'
                     : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'
@@ -153,7 +153,7 @@ function PlanDetail({ plan, drift, scopedAccountNames, fmt }: {
 
   return (
     <div className="space-y-4">
-      <div className="bg-surface border border-border rounded-md p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
         <div className="flex items-baseline justify-between mb-2">
           <h2 className="text-section-h2 text-text">{plan.name}</h2>
           <p className="text-[11px] text-text-3 tabular">

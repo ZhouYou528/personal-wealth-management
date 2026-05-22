@@ -189,7 +189,7 @@ export function Transactions() {
 
       {/* Filters panel */}
       {filtersOpen && (
-        <div className="mb-4 p-4 bg-surface border border-border rounded-md">
+        <div className="mb-4 p-4 bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <FilterCell label="From">
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="field-input w-full" />
@@ -240,7 +240,7 @@ export function Transactions() {
           {groups.map(([day, txs]) => (
             <div key={day}>
               <p className="text-micro text-text-3 uppercase tracking-wider mb-2">{dayLabel(day)}</p>
-              <div className="bg-surface rounded-md border border-border divide-y divide-border">
+              <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border divide-y divide-border">
                 {txs.map(tx => {
                   const meta = TX_GROUPS[tx.type]
                   return (
@@ -371,7 +371,7 @@ function AccountPill({ active, onClick, label, color }: {
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[12.5px] font-medium transition-colors',
+        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150',
         active
           ? 'bg-accent-soft text-accent'
           : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'

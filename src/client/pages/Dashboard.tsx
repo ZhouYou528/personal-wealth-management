@@ -110,8 +110,9 @@ function NavChart({
         <AreaChart data={chartData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={color} stopOpacity={0.18} />
-              <stop offset="95%" stopColor={color} stopOpacity={0} />
+              <stop offset="0%"  stopColor={color} stopOpacity={0.28} />
+              <stop offset="65%" stopColor={color} stopOpacity={0.06} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
             </linearGradient>
           </defs>
           <XAxis
@@ -445,13 +446,13 @@ export function Dashboard() {
       )}
 
       {/* ── Hero card ──────────────────────────────────────── */}
-      <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
 
         {/* Top: title + range selector — stack on mobile */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
           <div>
             <p className="text-micro text-text-3 uppercase tracking-widest mb-1">Total Net Worth</p>
-            <p className="tabular font-semibold text-[32px] sm:text-[40px] leading-none tracking-tight text-text private-val">
+            <p className="tabular font-bold text-[38px] sm:text-[54px] leading-none tracking-tight text-text private-val">
               {fmt(currentValue)}
             </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
@@ -485,13 +486,13 @@ export function Dashboard() {
           </div>
 
           {/* Range tabs — full width on mobile */}
-          <div className="flex items-center gap-0.5 bg-surface-2 rounded-md p-0.5 self-start sm:self-auto overflow-x-auto">
+          <div className="flex items-center gap-0.5 bg-surface-2 rounded-full p-0.5 self-start sm:self-auto overflow-x-auto">
             {(['1D', '1W', '1M', '3M', '1Y', 'ALL'] as Range[]).map(r => (
               <button
                 key={r}
                 onClick={() => setRange(r)}
                 className={cn(
-                  'px-2.5 py-1 rounded text-[11.5px] font-medium transition-colors',
+                  'px-3 py-1 rounded-full text-[11.5px] font-medium transition-all duration-150',
                   range === r ? 'bg-surface text-text shadow-sm' : 'text-text-3 hover:text-text',
                 )}
               >
@@ -510,7 +511,7 @@ export function Dashboard() {
         />
 
         {/* Period stats — 2-col on mobile, 4-col from sm up */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mt-5 pt-4 border-t border-border">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mt-5 pt-4 border-t border-border/40">
           <PeriodStat label="Today" {...todayChange} />
           <PeriodStat label="Week"  {...weekChange} />
           <PeriodStat label="Month" {...monthChange} />
@@ -522,12 +523,12 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         {/* Allocation */}
-        <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
           <AllocationDonut holdings={holdingsData} />
         </div>
 
         {/* Accounts */}
-        <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+        <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
           <AccountsHeader />
           <AccountsSummary accounts={accountsList} holdings={holdingsData} />
         </div>
@@ -551,7 +552,7 @@ function AccountFilterPill({
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[12.5px] font-medium transition-colors',
+        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150',
         active
           ? 'bg-accent-soft text-accent'
           : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'
@@ -595,7 +596,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
 
   if (movable.length === 0) {
     return (
-      <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
         <p className="text-small font-semibold text-text mb-2">Top Movers</p>
         <p className="text-[12px] text-text-3">
           Daily price changes will appear here after the next live quote refresh.
@@ -608,7 +609,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
   const losers  = [...movable].filter(m => m.todayPct < 0).sort((a, b) => a.todayPct - b.todayPct).slice(0, 5)
 
   return (
-    <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 py-4 sm:py-5">
+    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border px-4 sm:px-6 py-4 sm:py-5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-small font-semibold text-text">Top Movers</p>
         <p className="text-[11px] text-text-3">Today's price change</p>

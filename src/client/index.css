@@ -5,43 +5,44 @@
 /* ── Design tokens ───────────────────────────────────────────── */
 @layer base {
   :root {
-    /* Light mode */
-    --bg:            40 10% 98%;
+    /* Light mode — noticeably gray bg so white cards pop */
+    --bg:            220 20% 92%;
     --surface:       0 0% 100%;
-    --surface-2:     40 6% 96%;
-    --border:        30 7% 90%;
-    --border-strong: 25 8% 84%;
-    --text:          20 14% 10%;
-    --text-2:        25 6% 34%;
-    --text-3:        25 5% 62%;
+    --surface-2:     220 16% 96%;
+    --border:        220 13% 88%;
+    --border-strong: 220 10% 80%;
+    --text:          220 25% 10%;
+    --text-2:        220 8% 36%;
+    --text-3:        220 6% 58%;
 
-    --up:            160 74% 40%;
-    --down:          0 85% 60%;
+    --up:            160 74% 38%;
+    --down:          0 85% 58%;
     --warn:          38 92% 50%;
-    --up-soft:       152 80% 95%;
+    --up-soft:       152 80% 94%;
     --down-soft:     0 92% 95%;
 
     /* Accent — Emerald (default) */
-    --accent:        160 74% 40%;
-    --accent-soft:   152 80% 95%;
+    --accent:        160 74% 38%;
+    --accent-soft:   152 80% 94%;
     --accent-deep:   160 95% 26%;
   }
 
   .dark {
-    --bg:            0 0% 4%;
-    --surface:       0 0% 7%;
-    --surface-2:     0 0% 11%;
-    --border:        20 5% 16%;
-    --border-strong: 20 5% 22%;
-    --text:          40 9% 96%;
-    --text-2:        25 5% 64%;
-    --text-3:        25 4% 42%;
+    /* Dark mode — deep navy, Robinhood-style */
+    --bg:            222 44% 6%;
+    --surface:       222 32% 10%;
+    --surface-2:     222 26% 14%;
+    --border:        222 18% 19%;
+    --border-strong: 222 16% 25%;
+    --text:          210 15% 96%;
+    --text-2:        216 8% 66%;
+    --text-3:        216 6% 43%;
 
-    --up-soft:       160 74% 40% / 0.12;
-    --down-soft:     0 85% 60% / 0.14;
+    --up-soft:       160 74% 38% / 0.15;
+    --down-soft:     0 85% 58% / 0.17;
   }
 
-  /* Accent presets — applied via [data-accent="..."] on <html> */
+  /* Accent presets */
   [data-accent="sapphire"] {
     --accent:      217 91% 60%;
     --accent-soft: 214 100% 94%;
@@ -85,31 +86,31 @@
 
 /* ── Privacy mode ────────────────────────────────────────────── */
 .private .private-val {
-  filter: blur(10px);
-  transition: filter 150ms;
+  filter: blur(8px);
+  transition: filter 200ms ease;
   user-select: none;
 }
 
 /* ── Status pulse dot ────────────────────────────────────────── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
+  50%       { opacity: 0.35; }
 }
 .pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+  animation: pulse-dot 2.4s ease-in-out infinite;
 }
 
 /* ── Modal pop animation ─────────────────────────────────────── */
 @keyframes modal-pop {
-  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 .modal-pop {
-  animation: modal-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2) forwards;
+  animation: modal-pop 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 /* ── Scrollbar ───────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   @apply bg-border-strong rounded-full;
@@ -122,8 +123,9 @@
 
 /* ── Form inputs ─────────────────────────────────────────────── */
 .field-input {
-  @apply w-full px-3 py-2 rounded-sm border border-border bg-surface-2 text-text text-[13.5px]
-         focus:outline-none focus:border-accent placeholder:text-text-3;
+  @apply w-full px-3 py-2 rounded-lg border border-border bg-surface-2 text-text text-[13.5px]
+         focus:outline-none focus:border-accent placeholder:text-text-3
+         transition-colors duration-150;
 }
 
 select.field-input {

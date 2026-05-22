@@ -44,9 +44,9 @@ export default {
         xl: '28px',
       },
       boxShadow: {
-        sm: '0 1px 2px rgba(0,0,0,.04), 0 1px 1px rgba(0,0,0,.03)',
-        md: '0 4px 16px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04)',
-        lg: '0 20px 50px rgba(0,0,0,.10), 0 4px 12px rgba(0,0,0,.05)',
+        sm: '0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06)',
+        md: '0 4px 24px rgba(0,0,0,.13), 0 2px 8px rgba(0,0,0,.07)',
+        lg: '0 20px 60px rgba(0,0,0,.18), 0 8px 20px rgba(0,0,0,.09)',
       },
       spacing: {
         4.5: '18px',

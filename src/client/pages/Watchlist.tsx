@@ -87,7 +87,7 @@ export function Watchlist() {
       </div>
 
       {/* Watchlist table */}
-      <div className="bg-surface rounded-md border border-border overflow-hidden">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border overflow-hidden">
         <table className="w-full text-small">
           <thead>
             <tr className="border-b border-border">

@@ -102,7 +102,7 @@ export function Insights() {
       </div>
 
       {/* ── Realized gains detail ────────────────────────────────── */}
-      <div className="bg-surface border border-border rounded-md p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-section-h2 text-text">Realized gains — {currentYear}</h2>
           <p className="text-[11px] text-text-3 tabular">
@@ -122,7 +122,7 @@ export function Insights() {
       </div>
 
       {/* ── Dividend income ─────────────────────────────────────── */}
-      <div className="bg-surface border border-border rounded-md p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-section-h2 text-text">Dividend income</h2>
           <p className="text-[11px] text-text-3 tabular">
@@ -146,7 +146,7 @@ export function Insights() {
       </div>
 
       {/* ── Contributions ───────────────────────────────────────── */}
-      <div className="bg-surface border border-border rounded-md p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-section-h2 text-text">Contributions — {currentYear}</h2>
           <p className="text-[11px] text-text-3 tabular">{fmt(contribs.total)} total</p>
@@ -181,7 +181,7 @@ export function Insights() {
       </div>
 
       {/* ── Options detail ───────────────────────────────────────── */}
-      <div className="bg-surface border border-border rounded-md p-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-5">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-section-h2 text-text">Options premium — {currentYear}</h2>
         </div>
@@ -210,7 +210,7 @@ function StatCard({ icon, label, value, tone, sub }: {
   sub?: string
 }) {
   return (
-    <div className="bg-surface border border-border rounded-md p-4">
+    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border p-4">
       <div className="flex items-center gap-1.5 text-text-3 text-[11px] uppercase tracking-wider mb-2">
         <Wallet size={12} className="opacity-0" />{/* spacer for alignment, replaced by icon */}
         <div className="-ml-[18px] flex items-center gap-1.5">

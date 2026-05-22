@@ -11,11 +11,12 @@ export function Card({ children, className, padding = 'default', onClick }: Card
   return (
     <div
       className={cn(
-        'bg-surface rounded-md shadow-sm border border-border',
+        'bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border',
         padding === 'default' && 'p-5',
         padding === 'hero'    && 'p-7',
         padding === 'none'    && '',
-        onClick && 'cursor-pointer hover:border-border-strong transition-colors',
+        onClick && 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200',
+        !onClick && 'transition-shadow duration-200',
         className
       )}
       onClick={onClick}
