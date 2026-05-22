@@ -41,14 +41,39 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 
 CREATE TABLE IF NOT EXISTS goals (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  target     REAL NOT NULL,
-  current    REAL NOT NULL DEFAULT 0,
-  deadline   TEXT NOT NULL,
-  color      TEXT NOT NULL DEFAULT '#10B981',
-  icon       TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  target      REAL NOT NULL,
+  current     REAL NOT NULL DEFAULT 0,            -- fallback when no accounts are linked
+  deadline    TEXT NOT NULL,
+  color       TEXT NOT NULL DEFAULT '#10B981',
+  icon        TEXT NOT NULL DEFAULT '',
+  account_ids TEXT,                                -- JSON array of account IDs whose
+                                                   -- combined value auto-fills `current`
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Recurring transaction rules. The daily cron walks active rules and creates
+-- real transactions when their schedule fires (catching up if the cron was
+-- offline or the start_date is backdated). `last_fired` is the date most
+-- recently materialized; `next_due = last_fired + frequency` (or `start_date`
+-- if `last_fired` is null).
+CREATE TABLE IF NOT EXISTS recurring_rules (
+  id          TEXT PRIMARY KEY,
+  account_id  TEXT NOT NULL,
+  tx_type     TEXT NOT NULL,           -- 'deposit' | 'withdraw' | 'buy' | etc.
+  symbol      TEXT,                    -- nullable for cash flows
+  kind        TEXT,
+  qty         REAL,
+  price       REAL,
+  total       REAL NOT NULL,
+  frequency   TEXT NOT NULL,           -- 'biweekly' | 'monthly' | 'quarterly'
+  start_date  TEXT NOT NULL,
+  end_date    TEXT,
+  last_fired  TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  note        TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS events (

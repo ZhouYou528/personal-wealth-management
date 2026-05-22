@@ -21,8 +21,9 @@ async function resolveQuote(
   env: Env
 ): Promise<ResolvedQuote> {
   if (symbol === 'CASH') return { price: 1 }
-  // No free options-quote feed; fall back to cost basis until user marks-to-market
-  if (kind === 'option') return { price: fallback }
+  // No free quote feed for options or proprietary mutual funds; fall back to cost
+  // basis until the user marks-to-market via the holding detail page.
+  if (kind === 'option' || kind === 'mutual_fund') return { price: fallback }
   // Store the full Quote shape so both /api/holdings and /api/market/quotes can share
   // the cache without one truncating the other.
   const cacheKey = `quote:${symbol}`

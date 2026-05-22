@@ -1,14 +1,15 @@
 import { TrendingUp, TrendingDown } from 'lucide-react'
-import { cn, fmtPct, fmtMoney } from '@/lib/utils'
+import { cn, fmtPct } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 
 interface ChangePillProps {
   pct: number
   abs?: number
-  currency?: string
   size?: 'sm' | 'md'
 }
 
-export function ChangePill({ pct, abs, currency = 'USD', size = 'md' }: ChangePillProps) {
+export function ChangePill({ pct, abs, size = 'md' }: ChangePillProps) {
+  const { fmt } = useMoney()
   const positive = pct >= 0
   const Icon = positive ? TrendingUp : TrendingDown
 
@@ -22,7 +23,7 @@ export function ChangePill({ pct, abs, currency = 'USD', size = 'md' }: ChangePi
     >
       <Icon size={size === 'md' ? 13 : 11} strokeWidth={2.5} />
       {fmtPct(pct)}
-      {abs != null && <span className="opacity-70">{fmtMoney(abs, currency)}</span>}
+      {abs != null && <span className="opacity-70 private-val">{fmt(abs)}</span>}
     </span>
   )
 }

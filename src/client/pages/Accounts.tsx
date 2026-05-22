@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Check, Pencil, Plus, Trash2, X } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
@@ -118,6 +118,8 @@ export function Accounts() {
   const { selectedAccountId, setSelectedAccountId } = useStore()
   const qc = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
 
   const { data: accs = [] } = useQuery({
     queryKey: ['accounts'],
@@ -131,6 +133,27 @@ export function Accounts() {
       qc.invalidateQueries({ queryKey: ['accounts'] })
     },
   })
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => accountsApi.update(id, { name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setEditingId(null)
+    },
+  })
+
+  function startEdit(id: string, currentName: string) {
+    setEditingId(id)
+    setDraftName(currentName)
+  }
+  function saveEdit() {
+    const name = draftName.trim()
+    if (editingId && name && name !== accs.find(a => a.id === editingId)?.name) {
+      renameMutation.mutate({ id: editingId, name })
+    } else {
+      setEditingId(null)
+    }
+  }
 
   return (
     <div className="p-4 sm:p-8 max-w-5xl mx-auto">
@@ -146,29 +169,68 @@ export function Accounts() {
         {accs.map(acc => (
           <div
             key={acc.id}
-            onClick={() => setSelectedAccountId(selectedAccountId === acc.id ? null : acc.id)}
-            className={`group relative bg-surface rounded-md border p-5 cursor-pointer transition-all ${
-              selectedAccountId === acc.id
-                ? 'border-accent shadow-md'
-                : 'border-border hover:border-border-strong'
-            }`}
+            className="group relative bg-surface rounded-md border border-border p-5 hover:border-border-strong transition-colors"
           >
-            <button
-              onClick={e => {
-                e.stopPropagation()
-                if (confirm(`Delete "${acc.name}"? This won't delete its transactions.`)) {
-                  deleteMutation.mutate(acc.id)
-                }
-              }}
-              className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:text-down text-text-3"
-            >
-              <Trash2 size={13} />
-            </button>
+            {editingId !== acc.id && (
+              <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={e => { e.stopPropagation(); startEdit(acc.id, acc.name) }}
+                  className="p-1 rounded hover:text-accent text-text-3"
+                  title="Rename"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (confirm(`Delete "${acc.name}"? This won't delete its transactions.`)) {
+                      deleteMutation.mutate(acc.id)
+                    }
+                  }}
+                  className="p-1 rounded hover:text-down text-text-3"
+                  title="Delete"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
 
             <div className="flex items-center gap-3 mb-3">
               <AccountTypeBadge type={acc.type} color={acc.color} />
-              <div>
-                <p className="font-semibold text-text text-small">{acc.name}</p>
+              <div className="flex-1 min-w-0">
+                {editingId === acc.id ? (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <input
+                      autoFocus
+                      value={draftName}
+                      onChange={e => setDraftName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveEdit()
+                        if (e.key === 'Escape') setEditingId(null)
+                      }}
+                      disabled={renameMutation.isPending}
+                      className="font-semibold text-text text-small bg-surface-2 border border-border rounded-sm px-1.5 py-0.5 flex-1 min-w-0 focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      onClick={saveEdit}
+                      disabled={renameMutation.isPending}
+                      className="text-up p-0.5 hover:bg-up/10 rounded-sm"
+                      title="Save"
+                    >
+                      <Check size={13} />
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      disabled={renameMutation.isPending}
+                      className="text-text-3 p-0.5 hover:bg-surface-2 rounded-sm"
+                      title="Cancel"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <p className="font-semibold text-text text-small truncate">{acc.name}</p>
+                )}
                 <p className="text-[11px] text-text-3">{acc.institution}</p>
               </div>
             </div>

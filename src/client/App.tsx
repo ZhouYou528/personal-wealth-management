@@ -11,6 +11,7 @@ import { Watchlist } from './pages/Watchlist'
 import { Accounts } from './pages/Accounts'
 import { Goals } from './pages/Goals'
 import { Import } from './pages/Import'
+import { Recurring } from './pages/Recurring'
 import { useStore } from './lib/store'
 
 const qc = new QueryClient({
@@ -45,6 +46,7 @@ function AppShell() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="goals" element={<Goals />} />
           <Route path="import" element={<Import />} />
+          <Route path="recurring" element={<Recurring />} />
         </Route>
       </Routes>
       <AddTxModal />

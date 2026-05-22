@@ -244,6 +244,33 @@ describe('computeHoldings — options', () => {
     expect(cash([open, close])).toBeCloseTo(300, 2)  // net premium
   })
 
+  it('cash-secured put: short position is visible with negative qty + premium credited', () => {
+    const rows = [
+      tx({ type: 'deposit', tx_date: '2025-01-01', total: 20000 }),
+      // Sell-to-open 1 put at $150 strike for $5/share premium
+      tx({ type: 'sell_option', tx_date: '2025-01-02', symbol: 'AAPL', qty: 1, price: 5, total: 500,
+           option_type: 'put', strike: 150, expiry: '2025-03-15' }),
+    ]
+    const all = computeHoldings(rows)
+    const shortPut = all.find(h => h.kind === 'option')
+    expect(shortPut).toBeDefined()
+    expect(shortPut?.qty).toBe(-1)
+    expect(shortPut?.option_type).toBe('put')
+    expect(shortPut?.strike).toBe(150)
+    // Cash now reflects deposit + premium
+    expect(cash(rows)).toBeCloseTo(20500, 2)
+  })
+
+  it('buying to close a short put zeros the position', () => {
+    const open = tx({ type: 'sell_option', tx_date: '2025-01-01', symbol: 'AAPL', qty: 1, price: 5, total: 500,
+                     option_type: 'put', strike: 150, expiry: '2025-03-15' })
+    const close = tx({ type: 'buy_option', tx_date: '2025-02-01', symbol: 'AAPL', qty: 1, price: 2, total: 200,
+                      option_type: 'put', strike: 150, expiry: '2025-03-15' })
+    const positions = computeHoldings([open, close]).filter(h => h.kind === 'option')
+    expect(positions).toHaveLength(0)
+    expect(cash([open, close])).toBeCloseTo(300, 2)  // +500 premium, -200 to close
+  })
+
   it('options have multiplier=100', () => {
     const rows = [
       tx({ type: 'buy_option', tx_date: '2025-01-01', symbol: 'AAPL', qty: 1, price: 5, total: 500,

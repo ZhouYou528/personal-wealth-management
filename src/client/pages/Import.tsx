@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Upload, CheckCircle, XCircle, AlertCircle, FileText } from 'lucide-react'
-import { accounts as accountsApi, transactions as txApi, nav as navApi } from '@/lib/api'
+import { accounts as accountsApi, transactions as txApi, nav as navApi, fx as fxApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { cn, fmtMoney } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 import type { TxType, AssetKind } from '@shared/types'
 
 // ── CSV parser (handles quoted fields with embedded newlines) ─────────────────
@@ -89,8 +90,12 @@ function parseOptionDesc(desc: string): {
 }
 
 const ETF_SYMBOLS = new Set([
-  'SPY','QQQ','IVV','VOO','VTI','VEA','VWO','GLD','SLV','TLT','HYG','LQD',
-  'ARKK','ARKG','ARKW','XLF','XLE','XLK','XLV','SCHD','VNQ','JEPI',
+  // US-listed
+  'SPY','QQQ','QQQM','IVV','VOO','VTI','VEA','VWO','GLD','SLV','TLT','HYG','LQD',
+  'ARKK','ARKG','ARKW','XLF','XLE','XLK','XLV','SCHD','VNQ','JEPI','JEPQ','BIL','SGOV',
+  // TSX-listed (Canadian)
+  'XEQT','VEQT','XIC','VFV','VCN','XIU','XGRO','XBAL','VBAL','VGRO',
+  'CBIL','HISA','CASH','QQC','ZSP','ZAG','XAW','VAB','VEE','VIU',
 ])
 
 function mapRow(cols: string[]): MappedTx | null {
@@ -214,6 +219,201 @@ function mapRow(cols: string[]): MappedTx | null {
   }
 }
 
+// ─── IBKR Activity Statement parser ──────────────────────────────────────────
+// IBKR statements are multi-section CSVs: every row starts with a section name
+// (`Trades`, `Transfers`, `Deposits & Withdrawals`, …) followed by a record type
+// (`Header`, `Data`, `SubTotal`, `Total`). We only consume `Data` rows.
+//
+// Multi-currency note: IBKR accounts hold mixed currencies (e.g. CAD base with
+// USD positions). All monetary fields in the resulting `MappedTx` are converted
+// to USD using today's FX rate so they're compatible with the rest of the app
+// (which stores values in USD). Per-date historical FX would be more accurate
+// but adds an extra round-trip per unique date — acceptable approximation for now.
+
+type ToUSD = (currency: string, amount: number) => number
+
+function parseIBKRDate(s: string): string {
+  // "2026-05-05" or "2026-05-05, 12:48:11"
+  return s.split(',')[0].trim()
+}
+
+function parseIBKR(text: string, toUSD: ToUSD): MappedTx[] {
+  const rows = parseCSV(text)
+  const out: MappedTx[] = []
+  const fxNote = (cur: string) => cur && cur !== 'USD' ? `IBKR · ${cur} → USD @ today's rate` : 'IBKR'
+
+  for (const row of rows) {
+    if (row.length < 3) continue
+    const [section, recordType, ...fields] = row
+    if (recordType !== 'Data') continue
+
+    // ── Trades ─────────────────────────────────────────────
+    // DataDiscriminator, Asset Category, Currency, Symbol, Date/Time, Quantity,
+    //   T. Price, C. Price, Proceeds, Comm/Fee, Basis, Realized P/L, MTM P/L, Code
+    if (section === 'Trades') {
+      const [discriminator, assetCategory, currency, symbol, dateTime, qtyStr, priceStr, , proceedsStr] = fields
+      if (discriminator !== 'Order') continue
+      if (assetCategory === 'Forex') continue          // FX conversions — not modeled yet
+      if (!symbol || !dateTime) continue
+      const qty = parseFloat(qtyStr)
+      const price = parseFloat(priceStr)
+      const proceeds = parseFloat(proceedsStr) || 0
+      if (isNaN(qty) || qty === 0 || isNaN(price)) continue
+
+      const sym = symbol.replace(/\s+/g, '.')          // "BRK B" → "BRK.B"
+      const kind: AssetKind = ETF_SYMBOLS.has(sym) ? 'etf' : 'stock'
+      const isBuy = qty > 0
+
+      out.push({
+        tx_date: parseIBKRDate(dateTime),
+        type: isBuy ? 'buy' : 'sell',
+        symbol: sym,
+        kind,
+        qty: Math.abs(qty),
+        price: toUSD(currency, price),
+        total: toUSD(currency, Math.abs(proceeds)),
+        note: fxNote(currency),
+        _label: isBuy ? 'Buy' : 'Sell',
+        _skip: false,
+        _warn: currency !== 'USD' ? `Converted from ${currency} at today's FX rate` : undefined,
+      })
+      continue
+    }
+
+    // ── Transfers (ATON/ACAT) ─────────────────────────────
+    // Asset Category, Currency, Symbol, Date, Type, Direction, Xfer Company,
+    //   Xfer Account, Qty, Xfer Price, Market Value, Realized P/L, Cash Amount, Code
+    if (section === 'Transfers') {
+      const [assetCategory, currency, symbol, date, , direction, , , qtyStr, , marketValueStr] = fields
+      if (assetCategory !== 'Stocks') continue
+      if (!symbol || symbol === 'Total' || !date) continue
+      if (direction !== 'In' && direction !== 'Out') continue
+
+      const qty = parseFloat(qtyStr)
+      const marketValue = parseFloat((marketValueStr ?? '0').replace(/,/g, ''))
+      if (isNaN(qty) || qty === 0) continue
+
+      const sym = symbol.replace(/\s+/g, '.')
+      const pricePerShare = qty > 0 ? marketValue / qty : 0
+
+      out.push({
+        tx_date: date,
+        type: direction === 'In' ? 'transfer_in' : 'transfer_out',
+        symbol: sym,
+        kind: ETF_SYMBOLS.has(sym) ? 'etf' : 'stock',
+        qty,
+        price: toUSD(currency, pricePerShare),
+        total: 0,                                       // no cash effect
+        note: `IBKR ATON ${direction} · ${currency}`,
+        _label: direction === 'In' ? 'Transfer In' : 'Transfer Out',
+        _skip: false,
+        _warn: 'Cost basis approximated from market value on transfer date',
+      })
+      continue
+    }
+
+    // ── Deposits & Withdrawals ────────────────────────────
+    // Currency, Settle Date, Description, Amount
+    if (section === 'Deposits & Withdrawals') {
+      const [currency, settleDate, description, amountStr] = fields
+      if (!settleDate || !description) continue
+      if (description.startsWith('Total')) continue
+      const amount = parseFloat((amountStr ?? '0').replace(/,/g, ''))
+      if (isNaN(amount) || amount === 0) continue
+      const isAton = /aton/i.test(description)
+
+      out.push({
+        tx_date: settleDate,
+        type: amount > 0 ? 'deposit' : 'withdraw',
+        total: toUSD(currency, Math.abs(amount)),
+        note: description,
+        _label: isAton ? 'ACAT Cash' : (amount > 0 ? 'Deposit' : 'Withdrawal'),
+        _skip: false,
+      })
+      continue
+    }
+
+    // ── Dividends ─────────────────────────────────────────
+    // Currency, Date, Description, Amount
+    if (section === 'Dividends') {
+      const [currency, date, description, amountStr] = fields
+      if (!date || description?.startsWith('Total')) continue
+      const amount = parseFloat((amountStr ?? '0').replace(/,/g, ''))
+      if (isNaN(amount) || amount === 0) continue
+
+      // "AAPL(US0378331005) Cash Dividend USD 0.24 per Share" → AAPL
+      const m = description?.match(/^([A-Z. ]+?)\s*\(/)
+      const sym = m ? m[1].trim().replace(/\s+/g, '.') : undefined
+
+      out.push({
+        tx_date: date,
+        type: 'dividend',
+        symbol: sym,
+        total: toUSD(currency, Math.abs(amount)),
+        note: description,
+        _label: 'Dividend',
+        _skip: false,
+      })
+      continue
+    }
+
+    // ── Withholding Tax ───────────────────────────────────
+    if (section === 'Withholding Tax') {
+      const [currency, date, description, amountStr] = fields
+      if (!date || description?.startsWith('Total')) continue
+      const amount = parseFloat((amountStr ?? '0').replace(/,/g, ''))
+      if (isNaN(amount) || amount === 0) continue
+      out.push({
+        tx_date: date,
+        type: 'withdraw',
+        total: toUSD(currency, Math.abs(amount)),
+        note: `Withholding tax: ${description}`,
+        _label: 'Tax',
+        _skip: false,
+      })
+      continue
+    }
+
+    // ── Interest ──────────────────────────────────────────
+    if (section === 'Interest') {
+      const [currency, date, description, amountStr] = fields
+      if (!date || description?.startsWith('Total')) continue
+      const amount = parseFloat((amountStr ?? '0').replace(/,/g, ''))
+      if (isNaN(amount) || amount === 0) continue
+      out.push({
+        tx_date: date,
+        type: 'interest',
+        total: toUSD(currency, Math.abs(amount)),
+        note: description,
+        _label: 'Interest',
+        _skip: false,
+      })
+      continue
+    }
+
+    // ── Fees (commissions show under Trades already; this is account-level fees) ─
+    if (section === 'Fees') {
+      // Format: Subtitle, Currency, Date, Description, Amount
+      const [, currency, date, description, amountStr] = fields
+      if (!date || description?.startsWith('Total')) continue
+      const amount = parseFloat((amountStr ?? '0').replace(/,/g, ''))
+      if (isNaN(amount) || amount === 0) continue
+      out.push({
+        tx_date: date,
+        type: 'withdraw',
+        total: toUSD(currency, Math.abs(amount)),
+        note: `Fee: ${description}`,
+        _label: 'Fee',
+        _skip: false,
+      })
+      continue
+    }
+  }
+
+  // Sort oldest → newest so cost basis builds correctly
+  return out.sort((a, b) => a.tx_date.localeCompare(b.tx_date))
+}
+
 // ── Type colour pills ─────────────────────────────────────────────────────────
 
 const TYPE_COLOR: Record<string, string> = {
@@ -229,6 +429,7 @@ type Filter = 'all' | 'importing' | 'skipping'
 export function Import() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { fmt } = useMoney()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [rows, setRows] = useState<MappedTx[]>([])
@@ -278,33 +479,80 @@ export function Import() {
   // When format or accounts change, default accountId to the matching broker account
   useEffect(() => {
     if (!accs.length) return
-    const match = accs.find(a => a.institution.toLowerCase().includes(csvFormat))
+    const synonyms: Record<string, string[]> = {
+      robinhood: ['robinhood'],
+      ibkr:      ['ibkr', 'interactive brokers', 'interactive', 'ib '],
+      questrade: ['questrade'],
+      wealthsimple: ['wealthsimple'],
+      coinbase:  ['coinbase'],
+    }
+    const needles = synonyms[csvFormat] ?? [csvFormat]
+    const match = accs.find(a => needles.some(n => a.institution.toLowerCase().includes(n)))
       ?? accs[0]
     setAccountId(match.id)
   }, [csvFormat, accs])
 
-  function handleFile(file: File) {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
-      const parsed = parseCSV(text)
-      // Skip header row and footer/disclaimer rows
-      const header = parsed[0]
-      if (!header?.includes('Trans Code')) {
-        alert('This doesn\'t look like a Robinhood CSV. Expected columns: Activity Date, Trans Code, etc.')
+  // Manual backfill — useful when transactions were edited directly in the DB
+  // or after re-tagging cost basis. The import flow auto-fires this, but this
+  // button covers the cases that don't go through the create-transaction path.
+  const [backfillState, setBackfillState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  async function runBackfill() {
+    if (!accountId) return
+    setBackfillState('running')
+    try {
+      const res = await navApi.backfill(accountId)
+      qc.invalidateQueries({ queryKey: ['nav'] })
+      qc.invalidateQueries({ queryKey: ['holdings'] })
+      setBackfillState('done')
+      console.log('Backfill complete:', res)
+      setTimeout(() => setBackfillState('idle'), 3000)
+    } catch (e) {
+      console.error(e)
+      setBackfillState('error')
+      setTimeout(() => setBackfillState('idle'), 4000)
+    }
+  }
+
+  async function handleFile(file: File) {
+    const text = await file.text()
+
+    if (csvFormat === 'ibkr') {
+      // Quick sanity check — IBKR statements always start with "Statement,Header,..."
+      if (!text.includes('Trades,Header') && !text.includes('Account Information')) {
+        alert("This doesn't look like an IBKR Activity Statement. Export from IBKR Client Portal → Performance & Reports → Statements → Activity Statement (CSV).")
         return
       }
-      const mapped = parsed
-        .slice(1)
-        .map(mapRow)
-        .filter((r): r is MappedTx => r !== null && r.tx_date.length === 10)
-        // Sort oldest → newest so cost basis builds correctly
-        .sort((a, b) => a.tx_date.localeCompare(b.tx_date))
-
+      // Fetch current FX rates so we can convert non-USD trades. The app stores
+      // everything as USD by convention, so the converted values match existing data.
+      const fxData = await fxApi.rates('USD').catch(() => ({ rates: { USD: 1 } as Record<string, number> }))
+      const toUSD = (currency: string, amount: number) => {
+        if (!currency || currency === 'USD') return amount
+        const rate = fxData.rates[currency.toUpperCase()]
+        if (!rate || rate === 0) return amount   // unknown currency → pass through; user can correct
+        return amount / rate                       // 1 CAD = 1/1.37 USD
+      }
+      const mapped = parseIBKR(text, toUSD)
       setRows(mapped)
       setDone(null)
+      return
     }
-    reader.readAsText(file)
+
+    // Robinhood (default)
+    const parsed = parseCSV(text)
+    const header = parsed[0]
+    if (!header?.includes('Trans Code')) {
+      alert("This doesn't look like a Robinhood CSV. Expected columns: Activity Date, Trans Code, etc.")
+      return
+    }
+    const mapped = parsed
+      .slice(1)
+      .map(mapRow)
+      .filter((r): r is MappedTx => r !== null && r.tx_date.length === 10)
+      // Sort oldest → newest so cost basis builds correctly
+      .sort((a, b) => a.tx_date.localeCompare(b.tx_date))
+
+    setRows(mapped)
+    setDone(null)
   }
 
   function onDrop(e: React.DragEvent) {
@@ -410,7 +658,7 @@ export function Import() {
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-text">{row.symbol ?? '—'}</td>
-                    <td className="px-4 py-2.5 tabular text-text">{fmtMoney(row.total)}</td>
+                    <td className="px-4 py-2.5 tabular text-text">{fmt(row.total)}</td>
                     <td className="px-4 py-2.5 text-down text-[11px]">{error}</td>
                   </tr>
                 ))}
@@ -439,7 +687,7 @@ export function Import() {
           <select value={csvFormat} onChange={e => setCsvFormat(e.target.value)} className="field-input w-40">
             <option value="robinhood">Robinhood</option>
             <option value="questrade" disabled>Questrade (soon)</option>
-            <option value="ibkr" disabled>IBKR (soon)</option>
+            <option value="ibkr">IBKR (Activity Statement)</option>
             <option value="wealthsimple" disabled>Wealthsimple (soon)</option>
             <option value="coinbase" disabled>Coinbase (soon)</option>
           </select>
@@ -451,6 +699,22 @@ export function Import() {
               <option key={a.id} value={a.id}>{a.institution} · {a.type}</option>
             ))}
           </select>
+        </div>
+
+        {/* Manual backfill button — fires /api/nav/backfill for the selected account */}
+        <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!accountId || backfillState === 'running'}
+            onClick={runBackfill}
+            title="Recompute historical NAV snapshots for this account. Use after editing transactions directly."
+          >
+            {backfillState === 'running' ? 'Rebuilding…'
+              : backfillState === 'done' ? '✓ Rebuilt'
+              : backfillState === 'error' ? '✗ Failed'
+              : 'Rebuild chart history'}
+          </Button>
         </div>
       </div>
 
@@ -468,12 +732,19 @@ export function Import() {
         >
           <Upload size={32} className="text-text-3" />
           <p className="text-text font-medium">
-            Drop your {csvFormat === 'robinhood' ? 'Robinhood' : csvFormat} CSV here
+            Drop your {csvFormat === 'robinhood' ? 'Robinhood' : csvFormat === 'ibkr' ? 'IBKR' : csvFormat} CSV here
           </p>
           <p className="text-small text-text-3">or click to browse</p>
           {csvFormat === 'robinhood' && (
             <p className="text-[11px] text-text-3 mt-2">
               Robinhood → Account → Statements &amp; History → Download CSV
+            </p>
+          )}
+          {csvFormat === 'ibkr' && (
+            <p className="text-[11px] text-text-3 mt-2 text-center max-w-md">
+              IBKR Client Portal → Performance &amp; Reports → Statements → Activity Statement → Format: CSV.
+              Non-USD trades will be converted to USD at today's FX rate (approximation — historical FX
+              is not pulled).
             </p>
           )}
           <input ref={fileRef} type="file" accept=".csv" className="hidden"
@@ -591,9 +862,9 @@ export function Import() {
                     <td className="px-4 py-2.5 font-medium text-text">{r.symbol ?? '—'}</td>
                     <td className="px-4 py-2.5 tabular text-text-2">{r.qty ?? '—'}</td>
                     <td className="px-4 py-2.5 tabular text-text-2">
-                      {r.price != null ? fmtMoney(r.price) : '—'}
+                      {r.price != null ? fmt(r.price) : '—'}
                     </td>
-                    <td className="px-4 py-2.5 tabular font-medium text-text">{fmtMoney(r.total)}</td>
+                    <td className="px-4 py-2.5 tabular font-medium text-text">{fmt(r.total)}</td>
                     <td className="px-4 py-2.5">
                       {r._skipReason === 'Duplicate' ? (
                         <span className="flex items-center gap-1 text-[11px] text-warn">

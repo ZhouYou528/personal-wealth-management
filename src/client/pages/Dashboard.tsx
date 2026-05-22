@@ -5,7 +5,8 @@ import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { Glyph } from '@/components/Glyph'
 import { holdings as holdingsApi, nav as navApi, accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
-import { fmtMoney, fmtDate, cn, todayISO, daysAgoISO } from '@/lib/utils'
+import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -42,12 +43,6 @@ function findSnapBefore(snaps: NavSnapshot[], targetDate: string): NavSnapshot |
     .at(-1)
 }
 
-function fmtCompact(v: number) {
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(1)}K`
-  return fmtMoney(v)
-}
-
 // ── Custom tooltip ────────────────────────────────────────────
 
 function ChartTooltip({ active, payload, label }: {
@@ -55,11 +50,12 @@ function ChartTooltip({ active, payload, label }: {
   payload?: { value: number }[]
   label?: string
 }) {
+  const { fmt } = useMoney()
   if (!active || !payload?.length || !label) return null
   return (
     <div className="bg-surface border border-border rounded-lg px-3 py-2 shadow-lg text-small pointer-events-none">
       <p className="text-text-3 text-[11px] mb-0.5">{fmtDate(label)}</p>
-      <p className="tabular font-semibold text-text">{fmtMoney(payload[0].value)}</p>
+      <p className="tabular font-semibold text-text private-val">{fmt(payload[0].value)}</p>
     </div>
   )
 }
@@ -109,7 +105,7 @@ function NavChart({
   const gradId = `navGrad-${color.replace('#', '')}`
 
   return (
-    <div className="h-[180px] private-val -mx-6">
+    <div className="h-[180px] -mx-6">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={chartData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
           <defs>
@@ -149,6 +145,7 @@ function NavChart({
 function PeriodStat({ label, change, pct, pending }: {
   label: string; change: number; pct: number; pending?: boolean
 }) {
+  const { fmt } = useMoney()
   if (pending) {
     return (
       <div>
@@ -165,7 +162,7 @@ function PeriodStat({ label, change, pct, pending }: {
     <div>
       <p className="text-micro text-text-3 uppercase tracking-wider mb-1">{label}</p>
       <p className={cn('tabular text-[15px] font-semibold private-val', up ? 'text-up' : 'text-down')}>
-        {up ? '+' : ''}{fmtMoney(change)}
+        {up ? '+' : ''}{fmt(change)}
       </p>
       <p className={cn('tabular text-[11px]', up ? 'text-up' : 'text-down')}>
         {up ? '+' : ''}{pct.toFixed(2)}%
@@ -180,15 +177,18 @@ type DonutMode = 'holding' | 'class'
 
 function AllocationDonut({ holdings }: { holdings: Holding[] }) {
   const [mode, setMode] = useState<DonutMode>('holding')
+  const { fmt, fmtCompact } = useMoney()
 
-  const total = holdings.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
+  // Use absolute exposure so short positions occupy donut space rather than producing
+  // negative slices (Recharts can't render those).
+  const absValue = (h: Holding) => Math.abs(h.qty * h.px * (h.multiplier ?? 1))
+  const total = holdings.reduce((s, h) => s + absValue(h), 0)
 
   const slices = useMemo(() => {
     if (mode === 'class') {
       const byKind: Record<string, number> = {}
       for (const h of holdings) {
-        const v = h.qty * h.px * (h.multiplier ?? 1)
-        byKind[h.kind] = (byKind[h.kind] ?? 0) + v
+        byKind[h.kind] = (byKind[h.kind] ?? 0) + absValue(h)
       }
       return Object.entries(byKind)
         .sort(([, a], [, b]) => b - a)
@@ -202,16 +202,16 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
 
     // By individual holding
     const sorted = [...holdings]
-      .filter(h => h.qty * h.px > 0)
-      .sort((a, b) => (b.qty * b.px * (b.multiplier ?? 1)) - (a.qty * a.px * (a.multiplier ?? 1)))
+      .filter(h => absValue(h) > 0)
+      .sort((a, b) => absValue(b) - absValue(a))
     const top = sorted.slice(0, 9)
     const rest = sorted.slice(9)
-    const otherVal = rest.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
+    const otherVal = rest.reduce((s, h) => s + absValue(h), 0)
     return [
       ...top.map((h, i) => ({
         key: h.id,
-        label: h.symbol === 'CASH' ? 'Cash' : h.symbol,
-        val: h.qty * h.px * (h.multiplier ?? 1),
+        label: h.symbol === 'CASH' ? 'Cash' : (h.qty < 0 ? `${h.symbol} (short)` : h.symbol),
+        val: absValue(h),
         color: HOLDING_COLORS[i % HOLDING_COLORS.length],
       })),
       ...(otherVal > 0 ? [{ key: 'other', label: 'Other', val: otherVal, color: '#6B7280' }] : []),
@@ -267,8 +267,8 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
                   borderRadius: 8,
                   fontSize: 12,
                 }}
-                formatter={(v: number, _: unknown, entry: { payload: { label: string } }) => [
-                  fmtMoney(v), entry.payload.label,
+                formatter={(v: number, _name: string, entry: { payload?: { label?: string } }) => [
+                  fmt(v), entry.payload?.label ?? '',
                 ]}
               />
             </PieChart>
@@ -304,12 +304,15 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
 
 function AccountsSummary({ accounts, holdings }: { accounts: Account[]; holdings: Holding[] }) {
   const navigate = useNavigate()
+  const { fmt } = useMoney()
 
   const rows = useMemo(() => accounts.map(acc => {
     const ah = holdings.filter(h => h.account_id === acc.id)
     const value = ah.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
     const cost  = ah.reduce((s, h) => s + h.qty * h.cost * (h.multiplier ?? 1), 0)
-    return { ...acc, value, pnl: value - cost }
+    const pnl = value - cost
+    const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0
+    return { ...acc, value, pnl, pnlPct }
   }).filter(a => a.value > 0.01), [accounts, holdings])
 
   if (rows.length === 0) {
@@ -338,9 +341,10 @@ function AccountsSummary({ accounts, holdings }: { accounts: Account[]; holdings
             </p>
           </div>
           <div className="text-right flex-shrink-0">
-            <p className="tabular text-small font-semibold text-text private-val">{fmtMoney(acc.value)}</p>
+            <p className="tabular text-small font-semibold text-text private-val">{fmt(acc.value)}</p>
             <p className={cn('tabular text-[11px]', acc.pnl >= 0 ? 'text-up' : 'text-down')}>
-              {acc.pnl >= 0 ? '+' : ''}{fmtMoney(acc.pnl)}
+              <span className="private-val">{acc.pnl >= 0 ? '+' : ''}{fmt(acc.pnl)}</span>
+              <span className="opacity-70"> ({acc.pnlPct >= 0 ? '+' : ''}{acc.pnlPct.toFixed(2)}%)</span>
             </p>
           </div>
         </div>
@@ -352,8 +356,9 @@ function AccountsSummary({ accounts, holdings }: { accounts: Account[]; holdings
 // ── Dashboard ─────────────────────────────────────────────────
 
 export function Dashboard() {
-  const { selectedAccountId } = useStore()
+  const { selectedAccountId, setSelectedAccountId } = useStore()
   const navigate = useNavigate()
+  const { fmt } = useMoney()
   const [range, setRange] = useState<Range>('1M')
 
   const { data: holdingsData = [] } = useQuery({
@@ -373,6 +378,7 @@ export function Dashboard() {
 
   const currentValue = holdingsData.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
   const costBasis    = holdingsData.reduce((s, h) => s + h.qty * h.cost * (h.multiplier ?? 1), 0)
+  const locked       = lockedCollateral(holdingsData)
 
   // Sorted snapshots (ascending) for lookups
   const sortedSnaps = useMemo(
@@ -418,6 +424,26 @@ export function Dashboard() {
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
 
+      {/* ── Account filter pills ──────────────────────────── */}
+      {accountsList.length > 1 && (
+        <div className="flex gap-1.5 flex-wrap">
+          <AccountFilterPill
+            active={selectedAccountId == null}
+            onClick={() => setSelectedAccountId(null)}
+            label="All Accounts"
+          />
+          {accountsList.map(a => (
+            <AccountFilterPill
+              key={a.id}
+              active={selectedAccountId === a.id}
+              onClick={() => setSelectedAccountId(a.id)}
+              label={a.name}
+              color={a.color}
+            />
+          ))}
+        </div>
+      )}
+
       {/* ── Hero card ──────────────────────────────────────── */}
       <div className="bg-surface rounded-lg border border-border px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
 
@@ -426,12 +452,12 @@ export function Dashboard() {
           <div>
             <p className="text-micro text-text-3 uppercase tracking-widest mb-1">Total Net Worth</p>
             <p className="tabular font-semibold text-[32px] sm:text-[40px] leading-none tracking-tight text-text private-val">
-              {fmtMoney(currentValue)}
+              {fmt(currentValue)}
             </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
               <div className="flex items-center gap-1.5">
-                <span className={cn('tabular text-small font-medium', todayChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  {todayChange.change >= 0 ? '+' : ''}{fmtMoney(todayChange.change)}
+                <span className={cn('tabular text-small font-medium private-val', todayChange.change >= 0 ? 'text-up' : 'text-down')}>
+                  {todayChange.change >= 0 ? '+' : ''}{fmt(todayChange.change)}
                 </span>
                 <span className={cn('text-[11px]', todayChange.change >= 0 ? 'text-up' : 'text-down')}>
                   {todayChange.change >= 0 ? '+' : ''}{todayChange.pct.toFixed(2)}%
@@ -439,14 +465,22 @@ export function Dashboard() {
                 <span className="text-[11px] text-text-3">Today</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className={cn('tabular text-small font-medium', allTimeChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  {allTimeChange.change >= 0 ? '+' : ''}{fmtMoney(allTimeChange.change)}
+                <span className={cn('tabular text-small font-medium private-val', allTimeChange.change >= 0 ? 'text-up' : 'text-down')}>
+                  {allTimeChange.change >= 0 ? '+' : ''}{fmt(allTimeChange.change)}
                 </span>
                 <span className={cn('text-[11px]', allTimeChange.change >= 0 ? 'text-up' : 'text-down')}>
                   ({allTimeChange.change >= 0 ? '+' : ''}{allTimeChange.pct.toFixed(2)}%)
                 </span>
                 <span className="text-[11px] text-text-3">All time</span>
               </div>
+              {locked > 0 && (
+                <div className="flex items-center gap-1.5" title="Cash held by your broker as collateral on open short puts">
+                  <span className="tabular text-small font-medium text-warn private-val">
+                    {fmt(locked)}
+                  </span>
+                  <span className="text-[11px] text-text-3">locked</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -502,6 +536,32 @@ export function Dashboard() {
       {/* ── Top movers (below allocation & accounts) ───────── */}
       <TopMovers holdings={holdingsData} onPick={(id) => navigate(`/holdings/${encodeURIComponent(id)}`)} />
     </div>
+  )
+}
+
+function AccountFilterPill({
+  active, onClick, label, color,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  color?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[12.5px] font-medium transition-colors',
+        active
+          ? 'bg-accent-soft text-accent'
+          : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'
+      )}
+    >
+      {color && (
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+      )}
+      {label}
+    </button>
   )
 }
 
@@ -567,6 +627,7 @@ function MoverColumn({ title, icon, list, onPick }: {
   list: (Holding & { todayDollar: number; todayPct: number })[]
   onPick: (id: string) => void
 }) {
+  const { fmt } = useMoney()
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-2 text-[11px] text-text-3 uppercase tracking-wider">
@@ -585,11 +646,11 @@ function MoverColumn({ title, icon, list, onPick }: {
             <p className="text-small font-medium text-text truncate">{h.symbol}</p>
           </div>
           <div className="text-right flex-shrink-0">
-            <p className={cn('tabular text-small font-semibold private-val', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
+            <p className={cn('tabular text-small font-semibold', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
               {h.todayPct >= 0 ? '+' : ''}{h.todayPct.toFixed(2)}%
             </p>
-            <p className={cn('tabular text-[11px]', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
-              {h.todayDollar >= 0 ? '+' : ''}{fmtMoney(h.todayDollar)}
+            <p className={cn('tabular text-[11px] private-val', h.todayPct >= 0 ? 'text-up' : 'text-down')}>
+              {h.todayDollar >= 0 ? '+' : ''}{fmt(h.todayDollar)}
             </p>
           </div>
         </button>

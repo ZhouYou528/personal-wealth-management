@@ -66,15 +66,17 @@ export function fmtDateShort(iso: string): string {
 // ── Asset colours ────────────────────────────────────────────
 
 export const KIND_COLOR: Record<string, string> = {
-  stock:  '#10B981',
-  etf:    '#06B6D4',
-  option: '#F59E0B',
-  crypto: '#F97316',
-  cash:   '#A1A1AA',
+  stock:        '#10B981',
+  etf:          '#06B6D4',
+  mutual_fund:  '#8B5CF6',
+  option:       '#F59E0B',
+  crypto:       '#F97316',
+  cash:         '#A1A1AA',
 }
 
 export const KIND_LABEL: Record<string, string> = {
-  stock: 'Stock', etf: 'ETF', option: 'Option', crypto: 'Crypto', cash: 'Cash',
+  stock: 'Stock', etf: 'ETF', mutual_fund: 'Mutual Fund',
+  option: 'Option', crypto: 'Crypto', cash: 'Cash',
 }
 
 // ── Misc ──────────────────────────────────────────────────────
@@ -110,6 +112,23 @@ export function fmtOptionLabel(o: {
   const d = parseISODateLocal(o.expiry)
   const date = `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`
   return `${o.symbol} ${strike} ${date}`
+}
+
+/**
+ * For each open short put, returns the cash collateral the broker would hold:
+ *   collateral_per_contract = strike × multiplier
+ * Short put = option position with qty < 0 and option_type === 'put'.
+ * Covered calls don't lock cash (shares are the collateral), so we don't count them.
+ */
+export function lockedCollateral(holdings: {
+  kind: string; qty: number; strike?: number; multiplier?: number; option_type?: 'call' | 'put'
+}[]): number {
+  let total = 0
+  for (const h of holdings) {
+    if (h.kind !== 'option' || h.option_type !== 'put' || h.qty >= 0 || h.strike == null) continue
+    total += Math.abs(h.qty) * h.strike * (h.multiplier ?? 100)
+  }
+  return total
 }
 
 /** Days to expiry. Negative = expired. Treats expiry as a local-date end-of-day. */

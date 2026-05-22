@@ -55,7 +55,7 @@ export const transactions = {
   create: (body: Omit<Transaction, 'id' | 'created_at'>)     => request<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
   update: (id: string, body: Partial<Transaction>)            => request<Transaction>(`/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (id: string)                                        => request<{ ok: boolean }>(`/transactions/${id}`, { method: 'DELETE' }),
-  updateBySymbol: (symbol: string, body: { kind?: 'stock'|'etf'|'option'|'crypto'|'cash'; accountId?: string }) =>
+  updateBySymbol: (symbol: string, body: { kind?: 'stock'|'etf'|'mutual_fund'|'option'|'crypto'|'cash'; accountId?: string }) =>
     request<{ ok: boolean; changed: number }>(`/transactions/by-symbol/${encodeURIComponent(symbol)}`,
       { method: 'PATCH', body: JSON.stringify(body) }),
 }
@@ -106,6 +106,33 @@ export const market = {
 
 export const events = {
   upcoming: () => request<CalendarEvent[]>('/events'),
+}
+
+// ── Recurring rules ─────────────────────────────────────────
+
+import type { RecurringRule } from '@shared/types'
+type DecoratedRule = RecurringRule & { next_due: string | null }
+
+export const recurring = {
+  list:   ()                                                 => request<DecoratedRule[]>('/recurring'),
+  create: (body: Omit<RecurringRule, 'id' | 'created_at' | 'active' | 'last_fired'> & { active?: number }) =>
+    request<{ ok: boolean; id: string }>('/recurring', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<RecurringRule>) =>
+    request<{ ok: boolean }>(`/recurring/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string) =>
+    request<{ ok: boolean }>(`/recurring/${id}`, { method: 'DELETE' }),
+  runOne: (id: string) =>
+    request<{ ok: boolean; fired: string[] }>(`/recurring/${id}/run`, { method: 'POST' }),
+  runAll: () =>
+    request<{ ok: boolean; result: { rule_id: string; fired: string[] }[] }>(`/recurring/run-all`, { method: 'POST' }),
+}
+
+// ── FX ───────────────────────────────────────────────────────
+
+export interface FxResponse { base: string; date: string; rates: Record<string, number>; stale?: boolean }
+
+export const fx = {
+  rates: (base = 'USD') => request<FxResponse>(`/fx?base=${encodeURIComponent(base)}`),
 }
 
 // ── NAV ──────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
-  RefreshCw, Menu, X, Wallet, BookOpen, Upload,
+  RefreshCw, Menu, X, Wallet, BookOpen, Upload, Repeat,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { to: '/accounts',     label: 'Accounts',     icon: Wallet },
   { to: '/goals',        label: 'Goals',        icon: Target },
   { to: '/import',       label: 'Import',       icon: Upload },
+  { to: '/recurring',    label: 'Recurring',    icon: Repeat },
 ]
 
 function NavItem({ to, label, icon: Icon }: (typeof NAV_ITEMS)[number]) {
@@ -72,7 +73,8 @@ function StatusDot() {
 }
 
 export function Layout() {
-  const { privacyMode, togglePrivacy, mobileNavOpen, setMobileNavOpen, openAddTx } = useStore()
+  const { privacyMode, togglePrivacy, mobileNavOpen, setMobileNavOpen, openAddTx,
+          currency, setCurrency } = useStore()
   const qc = useQueryClient()
   const isFetching = useIsFetching()
 
@@ -109,6 +111,15 @@ export function Layout() {
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Currency toggle — flips display between USD and CAD app-wide */}
+            <button
+              onClick={() => setCurrency(currency === 'USD' ? 'CAD' : 'USD')}
+              title={`Display currency: ${currency} · click to switch`}
+              className="px-2 py-1 rounded-sm text-[11.5px] font-bold tabular tracking-wider text-text-2 hover:text-text hover:bg-surface-2 transition-colors"
+            >
+              {currency}
+            </button>
+
             <Button
               variant="ghost"
               size="icon"

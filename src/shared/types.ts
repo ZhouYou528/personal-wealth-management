@@ -26,7 +26,7 @@ export type TxType =
   | 'recurring'
   | 'split'
 
-export type AssetKind = 'stock' | 'etf' | 'option' | 'crypto' | 'cash'
+export type AssetKind = 'stock' | 'etf' | 'mutual_fund' | 'option' | 'crypto' | 'cash'
 
 export interface Transaction {
   id: string
@@ -79,10 +79,31 @@ export interface Goal {
   id: string
   name: string
   target: number
-  current: number
+  current: number              // fallback when account_ids is empty
   deadline: string
   color: string
   icon: string
+  account_ids?: string[]       // accounts whose combined value auto-fills `current`
+  created_at: string
+}
+
+export type RecurringFrequency = 'biweekly' | 'monthly' | 'quarterly'
+
+export interface RecurringRule {
+  id: string
+  account_id: string
+  tx_type: TxType
+  symbol?: string
+  kind?: AssetKind
+  qty?: number
+  price?: number
+  total: number
+  frequency: RecurringFrequency
+  start_date: string          // YYYY-MM-DD, when the first fire should land
+  end_date?: string           // optional stop date
+  last_fired?: string         // date most recently materialized
+  active: number              // 0/1 (SQLite boolean)
+  note?: string
   created_at: string
 }
 

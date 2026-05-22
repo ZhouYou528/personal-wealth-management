@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { accounts as accountsApi, transactions as txApi, nav as navApi, market } from '@/lib/api'
+import { accounts as accountsApi, transactions as txApi, nav as navApi, market, fx as fxApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { Button } from './ui/button'
 import { todayISO } from '@/lib/utils'
@@ -59,6 +59,9 @@ export function AddTxModal() {
   const [price, setPrice] = useState('')
   const [total, setTotal] = useState('')
   const [note, setNote] = useState('')
+  // Currency the user is entering amounts in. Converted to USD on submit since
+  // the storage convention is USD.
+  const [entryCurrency, setEntryCurrency] = useState('USD')
   const [optionType, setOptionType] = useState<'call' | 'put'>('call')
   const [strike, setStrike] = useState('')
   const [expiry, setExpiry] = useState('')
@@ -99,6 +102,7 @@ export function AddTxModal() {
       setStrike(''); setExpiry(''); setDate(todayISO())
       setFromAccountId(''); setToAccountId('')
       setSplitNew('2'); setSplitOld('1')
+      setEntryCurrency('USD')
     }, 200)
   }
 
@@ -177,19 +181,39 @@ export function AddTxModal() {
     setSymbolResults(results)
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const cfg = TX_TYPES[type]
     const isSplit = type === 'split'
     const isShareTransfer = type === 'transfer_in' || type === 'transfer_out'
+
+    // Convert entered amounts to USD if user picked a non-USD currency.
+    // Source: ECB rates via the worker /api/fx endpoint (cached 60min).
+    let priceUSD = price ? Number(price) : undefined
+    let totalUSD = Number(total)
+    let originalCurrencyNote = ''
+    if (entryCurrency !== 'USD' && !isSplit) {
+      try {
+        const fx = await fxApi.rates('USD')
+        const rate = fx.rates[entryCurrency]
+        if (rate && rate > 0) {
+          if (priceUSD != null) priceUSD = priceUSD / rate
+          totalUSD = totalUSD / rate
+          originalCurrencyNote = ` [${entryCurrency} ${total} @ rate ${(1 / rate).toFixed(4)}]`
+        }
+      } catch (e) {
+        console.warn('FX fetch failed, storing as-entered:', e)
+      }
+    }
+
     const body = {
       tx_date: date, type,
       account_id: accountId || accs[0]?.id,
       symbol: symbol || undefined,
       kind: cfg.kind,
       qty: isSplit ? Number(splitNew) : qty ? Number(qty) : undefined,
-      price: isSplit ? Number(splitOld) : price ? Number(price) : undefined,
-      total: (isSplit || isShareTransfer) ? 0 : Number(total),
-      note: note || undefined,
+      price: isSplit ? Number(splitOld) : priceUSD,
+      total: (isSplit || isShareTransfer) ? 0 : totalUSD,
+      note: (note ?? '') + originalCurrencyNote || undefined,
       to_account: toAccountId || undefined,
       from_account: fromAccountId || undefined,
       option_type: (type === 'buy_option' || type === 'sell_option') ? optionType : undefined,
@@ -308,9 +332,34 @@ export function AddTxModal() {
                 </div>
               )}
 
-              <Field label="Date">
-                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="field-input" />
-              </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Date">
+                  <input type="date" value={date} onChange={e => setDate(e.target.value)} className="field-input" />
+                </Field>
+                <Field label="Entry currency">
+                  <select
+                    value={entryCurrency}
+                    onChange={e => setEntryCurrency(e.target.value)}
+                    className="field-input"
+                    title={entryCurrency === 'USD'
+                      ? 'Amounts entered in USD (default)'
+                      : `Amounts will be converted to USD via today's ECB rate before saving`}
+                  >
+                    <option value="USD">USD</option>
+                    <option value="CAD">CAD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="HKD">HKD</option>
+                    <option value="JPY">JPY</option>
+                  </select>
+                </Field>
+              </div>
+              {entryCurrency !== 'USD' && (
+                <p className="text-[11px] text-text-3 -mt-2">
+                  Amount fields below are in {entryCurrency}. They'll be converted to USD on save
+                  using today's ECB reference rate (cached 60min).
+                </p>
+              )}
 
               {fields.includes('symbol') && (
                 <Field label="Symbol">

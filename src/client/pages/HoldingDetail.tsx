@@ -8,7 +8,8 @@ import { KindBadge } from '@/components/ui/badge'
 import { ChangePill } from '@/components/ChangePill'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { fmtMoney, fmtQty, fmtDate, fmtOptionLabel, daysToExpiry, todayISO, KIND_COLOR, KIND_LABEL } from '@/lib/utils'
+import { fmtQty, fmtDate, fmtOptionLabel, daysToExpiry, todayISO, lockedCollateral, KIND_COLOR, KIND_LABEL } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 import type { AssetKind } from '@shared/types'
 import { useStore } from '@/lib/store'
 
@@ -26,6 +27,7 @@ export function HoldingDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { fmt } = useMoney()
   const { selectedAccountId, openAddTx } = useStore()
 
   const { data: allHoldings = [], isLoading, isFetching } = useQuery({
@@ -218,7 +220,7 @@ export function HoldingDetail() {
 
         <div className="mt-4 flex items-baseline gap-3 flex-wrap">
           <span className="tabular font-semibold text-[28px] sm:text-[36px] leading-none text-text private-val">
-            {fmtMoney(holding.px)}
+            {fmt(holding.px)}
           </span>
           <ChangePill pct={pnlPct} />
           {isOption && (
@@ -241,30 +243,59 @@ export function HoldingDetail() {
       </Card>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <Stat label="Market Value" value={fmtMoney(value)} />
-        </Card>
-        <Card>
-          <Stat label="Cost Basis" value={fmtMoney(costTotal)} sub={`Avg ${fmtMoney(holding.cost)}/unit`} />
-        </Card>
-        <Card>
-          <Stat
-            label="Total Return"
-            value={`${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)}`}
-            sub={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}
-          />
-        </Card>
-        <Card>
-          <Stat
-            label={isOption ? 'Contracts' : 'Quantity'}
-            value={fmtQty(holding.qty)}
-            sub={isOption
-              ? `× ${holding.multiplier ?? 100} shares · ${holding.option_type ?? ''} ${holding.strike ?? ''}`
-              : holding.kind}
-          />
-        </Card>
-      </div>
+      {isCash ? (() => {
+        // For cash holdings: replace the standard four-stat row with Total / Locked / Available.
+        // `locked` comes from open short puts in the same account.
+        const sameAccountHoldings = allHoldings.filter(h => h.account_id === holding.account_id)
+        const locked = lockedCollateral(sameAccountHoldings)
+        const available = value - locked
+        return (
+          <div className="grid grid-cols-3 gap-4">
+            <Card>
+              <Stat label="Total Cash" value={fmt(value)} />
+            </Card>
+            <Card>
+              <Stat
+                label="Locked"
+                value={fmt(locked)}
+                sub={locked > 0 ? 'Collateral on short puts' : 'No open short puts'}
+              />
+            </Card>
+            <Card>
+              <Stat
+                label="Available"
+                value={fmt(available)}
+                sub={available < 0 ? 'Overcommitted' : 'Buying power'}
+              />
+            </Card>
+          </div>
+        )
+      })() : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <Stat label="Market Value" value={fmt(value)} />
+          </Card>
+          <Card>
+            <Stat label="Cost Basis" value={fmt(costTotal)} sub={`Avg ${fmt(holding.cost)}/unit`} />
+          </Card>
+          <Card>
+            <Stat
+              label="Total Return"
+              value={`${pnl >= 0 ? '+' : ''}${fmt(pnl)}`}
+              sub={`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}
+            />
+          </Card>
+          <Card>
+            <Stat
+              label={isOption ? 'Contracts' : 'Quantity'}
+              value={fmtQty(holding.qty)}
+              sub={isOption
+                ? `× ${holding.multiplier ?? 100} shares · ${holding.option_type ?? ''} ${holding.strike ?? ''}`
+                : holding.kind}
+            />
+          </Card>
+        </div>
+      )}
 
       {/* Transactions in this symbol (filtered to this contract for options) */}
       <Card>
@@ -287,13 +318,13 @@ export function HoldingDetail() {
                 </span>
                 {tx.qty && (
                   <span className="text-[11px] text-text-3 ml-1.5">
-                    {fmtQty(tx.qty)} @ {fmtMoney(tx.price ?? 0)}
+                    {fmtQty(tx.qty)} @ {fmt(tx.price ?? 0)}
                   </span>
                 )}
               </div>
               <div className="text-right">
                 <p className="tabular text-small font-medium text-text private-val">
-                  {fmtMoney(Math.abs(tx.total))}
+                  {fmt(Math.abs(tx.total))}
                 </p>
                 <p className="text-[11px] text-text-3">{fmtDate(tx.tx_date)}</p>
               </div>
@@ -399,7 +430,7 @@ function KindSelect({
         className="appearance-none rounded px-1.5 py-0.5 text-[11px] font-medium cursor-pointer pr-5 border-0"
         style={{ backgroundColor: `${color}20`, color }}
       >
-        {(['stock','etf','crypto','cash'] as AssetKind[]).map(k => (
+        {(['stock','etf','mutual_fund','crypto','cash'] as AssetKind[]).map(k => (
           <option key={k} value={k}>{KIND_LABEL[k]}</option>
         ))}
       </select>

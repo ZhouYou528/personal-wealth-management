@@ -8,6 +8,8 @@ import watchlistRoutes    from './routes/watchlist'
 import goalsRoutes        from './routes/goals'
 import marketRoutes       from './routes/market'
 import navRoutes          from './routes/nav'
+import fxRoutes           from './routes/fx'
+import recurringRoutes    from './routes/recurring'
 import * as q             from './db/queries'
 
 const api = new Hono<{ Bindings: Env }>()
@@ -19,6 +21,8 @@ const api = new Hono<{ Bindings: Env }>()
   .route('/goals',        goalsRoutes)
   .route('/market',       marketRoutes)
   .route('/nav',          navRoutes)
+  .route('/fx',           fxRoutes)
+  .route('/recurring',    recurringRoutes)
 
 // GET /api/events — upcoming calendar events
 api.get('/events', async (c) => {
@@ -61,6 +65,15 @@ export default {
 }
 
 async function runDailySnapshot(env: Env): Promise<void> {
+  // Step 1: materialize any due recurring transactions BEFORE the snapshot,
+  // so today's NAV reflects them.
+  try {
+    const { fireAllRules } = await import('./lib/recurring')
+    await fireAllRules(env.DB)
+  } catch (e) {
+    console.error('fireAllRules failed:', e)
+  }
+
   const { computeHoldings } = await import('./lib/positions')
   const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
 

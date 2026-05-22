@@ -285,7 +285,10 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
   }
 
   return Array.from(map.entries())
-    .filter(([, p]) => p.kind === 'cash' ? Math.abs(p.qty) > 0.01 : p.qty > 1e-4)
+    .filter(([, p]) =>
+      p.kind === 'cash'   ? Math.abs(p.qty) > 0.01 :
+      p.kind === 'option' ? Math.abs(p.qty) > 1e-4 :       // keep short option positions
+      p.qty > 1e-4)
     .map(([key, p]) => ({
       id: key,
       account_id: p.account_id,

@@ -7,16 +7,18 @@ import { useStore } from '@/lib/store'
 import { Glyph } from '@/components/Glyph'
 import { KindBadge } from '@/components/ui/badge'
 import { ChangePill } from '@/components/ChangePill'
-import { fmtMoney, fmtQty, fmtOptionLabel, daysToExpiry, cn } from '@/lib/utils'
+import { fmtQty, fmtOptionLabel, daysToExpiry, lockedCollateral, cn } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 import type { AssetKind, Holding } from '@shared/types'
 
 const FILTERS: { label: string; value: AssetKind | 'all' }[] = [
-  { label: 'All',     value: 'all' },
-  { label: 'Stocks',  value: 'stock' },
-  { label: 'ETFs',    value: 'etf' },
-  { label: 'Options', value: 'option' },
-  { label: 'Crypto',  value: 'crypto' },
-  { label: 'Cash',    value: 'cash' },
+  { label: 'All',           value: 'all' },
+  { label: 'Stocks',        value: 'stock' },
+  { label: 'ETFs',          value: 'etf' },
+  { label: 'Mutual Funds',  value: 'mutual_fund' },
+  { label: 'Options',       value: 'option' },
+  { label: 'Crypto',        value: 'crypto' },
+  { label: 'Cash',          value: 'cash' },
 ]
 
 type SortKey = 'symbol' | 'account' | 'qty' | 'price' | 'today' | 'value' | 'pnl' | 'alloc'
@@ -24,19 +26,21 @@ type Dir = 'asc' | 'desc'
 
 // Mobile right-side metric — tapping a row value cycles to the next; tapping the
 // header sorts by the current one.
+// `render` takes a fmt function so it can use the user's chosen display currency.
+type FmtFn = (v: number) => string
 type MobileMetric = {
   key: string
   label: string
   sortKey: SortKey
-  render: (h: EnrichedHolding) => React.ReactNode
+  render: (h: EnrichedHolding, fmt: FmtFn) => React.ReactNode
 }
 const MOBILE_METRICS: MobileMetric[] = [
   {
     key: 'pnl', label: 'P&L', sortKey: 'pnl',
-    render: (h) => (
+    render: (h, fmt) => (
       <div className="flex flex-col items-end gap-0.5">
         <span className={cn('tabular text-small private-val', h.pnl >= 0 ? 'text-up' : 'text-down')}>
-          {h.pnl >= 0 ? '+' : ''}{fmtMoney(h.pnl)}
+          {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)}
         </span>
         <ChangePill pct={h.pnlPct} size="sm" />
       </div>
@@ -44,10 +48,10 @@ const MOBILE_METRICS: MobileMetric[] = [
   },
   {
     key: 'today', label: 'Today', sortKey: 'today',
-    render: (h) => h.changePct != null ? (
+    render: (h, fmt) => h.changePct != null ? (
       <div className="text-right">
         <div className={cn('tabular text-small font-semibold private-val', h.changePct >= 0 ? 'text-up' : 'text-down')}>
-          {h.changePct >= 0 ? '+' : ''}{fmtMoney(h.todayChangeValue)}
+          {h.changePct >= 0 ? '+' : ''}{fmt(h.todayChangeValue)}
         </div>
         <div className={cn('tabular text-[11px]', h.changePct >= 0 ? 'text-up' : 'text-down')}>
           {h.changePct >= 0 ? '+' : ''}{h.changePct.toFixed(2)}%
@@ -57,7 +61,7 @@ const MOBILE_METRICS: MobileMetric[] = [
   },
   {
     key: 'value', label: 'Value', sortKey: 'value',
-    render: (h) => <div className="tabular text-small font-semibold text-text private-val text-right">{fmtMoney(h.value)}</div>,
+    render: (h, fmt) => <div className="tabular text-small font-semibold text-text private-val text-right">{fmt(h.value)}</div>,
   },
   {
     key: 'qty', label: 'Qty', sortKey: 'qty',
@@ -65,7 +69,7 @@ const MOBILE_METRICS: MobileMetric[] = [
   },
   {
     key: 'price', label: 'Price', sortKey: 'price',
-    render: (h) => <div className="tabular text-small text-text text-right">{fmtMoney(h.px)}</div>,
+    render: (h, fmt) => <div className="tabular text-small text-text text-right">{fmt(h.px)}</div>,
   },
   {
     key: 'alloc', label: 'Alloc', sortKey: 'alloc',
@@ -90,8 +94,9 @@ type EnrichedHolding = Holding & {
 }
 
 export function Holdings() {
-  const { selectedAccountId } = useStore()
+  const { selectedAccountId, setSelectedAccountId } = useStore()
   const navigate = useNavigate()
+  const { fmt } = useMoney()
   const [filter, setFilter] = useState<AssetKind | 'all'>('all')
   const [sortKey, setSortKey] = useState<SortKey>('alloc')
   const [sortDir, setSortDir] = useState<Dir>('desc')
@@ -105,8 +110,21 @@ export function Holdings() {
   const { data: accs = [] } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list })
   const accMap = Object.fromEntries(accs.map(a => [a.id, a]))
 
+  // Cash-collateral locked per account (from open short puts).
+  // Computed from the full holdings list so it's stable across filter changes.
+  const lockedByAccount = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const acc of accs) {
+      m[acc.id] = lockedCollateral(allHoldings.filter(h => h.account_id === acc.id))
+    }
+    return m
+  }, [allHoldings, accs])
+
   const filtered = filter === 'all' ? allHoldings : allHoldings.filter(h => h.kind === filter)
   const totalValue = filtered.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
+  // Gross exposure (|value| summed) — short positions occupy portfolio space too, even
+  // if they net out negative. Use this as the allocation denominator so % is always positive.
+  const grossExposure = filtered.reduce((s, h) => s + Math.abs(h.qty * h.px * (h.multiplier ?? 1)), 0)
 
   // Enrich with computed columns
   const enriched: EnrichedHolding[] = useMemo(() => filtered.map(h => {
@@ -115,10 +133,10 @@ export function Holdings() {
     const cost  = h.qty * h.cost * mult
     const pnl   = value - cost
     const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0
-    const alloc = totalValue > 0 ? (value / totalValue) * 100 : 0
+    const alloc = grossExposure > 0 ? (Math.abs(value) / grossExposure) * 100 : 0
     const todayChangeValue = h.change != null ? h.change * h.qty * mult : 0
     return { ...h, value, cost, pnl, pnlPct, alloc, todayChangeValue }
-  }), [filtered, totalValue])
+  }), [filtered, grossExposure])
 
   // Sort
   const sorted = useMemo(() => {
@@ -153,14 +171,35 @@ export function Holdings() {
 
   return (
     <div className="p-4 sm:p-8 max-w-7xl mx-auto">
-      <div className="flex items-baseline justify-between mb-6">
+      <div className="flex items-baseline justify-between mb-4">
         <div>
           <h1 className="text-page-title text-text">Holdings</h1>
           <p className="text-small text-text-3 tabular mt-0.5">
-            {allHoldings.length} positions · {fmtMoney(totalValue)} total value
+            {allHoldings.length} positions · {fmt(totalValue)} total value
           </p>
         </div>
       </div>
+
+      {/* Account filter pills — same global filter as the Dashboard so users
+          can see and change it without leaving the page. */}
+      {accs.length > 1 && (
+        <div className="flex gap-1.5 flex-wrap mb-4">
+          <AccountPill
+            active={selectedAccountId == null}
+            onClick={() => setSelectedAccountId(null)}
+            label="All Accounts"
+          />
+          {accs.map(a => (
+            <AccountPill
+              key={a.id}
+              active={selectedAccountId === a.id}
+              onClick={() => setSelectedAccountId(a.id)}
+              label={a.name}
+              color={a.color}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Kind filter tabs */}
       <div className="flex gap-1 mb-4 flex-wrap">
@@ -219,6 +258,11 @@ export function Holdings() {
                               {h.kind === 'option' ? fmtOptionLabel(h) : h.symbol}
                             </span>
                             <KindBadge kind={h.kind} />
+                            {h.kind === 'option' && h.qty < 0 && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-down bg-down/10 rounded px-1.5 py-0.5">
+                                Short
+                              </span>
+                            )}
                           </div>
                           <p className="text-[11px] text-text-3">
                             {h.kind === 'option' ? (() => {
@@ -227,7 +271,12 @@ export function Holdings() {
                               if (dte < 0) return `Expired ${-dte}d ago`
                               if (dte === 0) return 'Expires today'
                               return `${dte}d to expiry`
-                            })() : h.name}
+                            })() : h.kind === 'cash' && (lockedByAccount[h.account_id] ?? 0) > 0 ? (
+                              <>
+                                <span className="text-warn">{fmt(lockedByAccount[h.account_id])}</span> locked ·{' '}
+                                <span className="text-text-2">{fmt(h.value - lockedByAccount[h.account_id])}</span> available
+                              </>
+                            ) : h.name}
                           </p>
                         </div>
                       </div>
@@ -246,7 +295,7 @@ export function Holdings() {
                       })()}
                     </td>
                     <td className="px-4 py-3 tabular text-text-2">{fmtQty(h.qty)}</td>
-                    <td className="px-4 py-3 tabular text-text">{fmtMoney(h.px)}</td>
+                    <td className="px-4 py-3 tabular text-text">{fmt(h.px)}</td>
                     <td className="px-4 py-3">
                       {h.changePct != null ? (
                         <span className={cn('tabular text-[12px]', h.changePct >= 0 ? 'text-up' : 'text-down')}>
@@ -254,11 +303,11 @@ export function Holdings() {
                         </span>
                       ) : <span className="text-text-3 text-[11px]">—</span>}
                     </td>
-                    <td className="px-4 py-3 tabular font-semibold text-text private-val">{fmtMoney(h.value)}</td>
+                    <td className="px-4 py-3 tabular font-semibold text-text private-val">{fmt(h.value)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
                         <span className={`tabular ${h.pnl >= 0 ? 'text-up' : 'text-down'} private-val`}>
-                          {h.pnl >= 0 ? '+' : ''}{fmtMoney(h.pnl)}
+                          {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)}
                         </span>
                         <ChangePill pct={h.pnlPct} size="sm" />
                       </div>
@@ -315,11 +364,20 @@ export function Holdings() {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-text truncate">
                       {h.kind === 'option' ? fmtOptionLabel(h) : h.symbol}
+                      {h.kind === 'option' && h.qty < 0 && (
+                        <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wider text-down bg-down/10 rounded px-1 py-0.5">
+                          Short
+                        </span>
+                      )}
                     </p>
-                    <p className="text-[11px] text-text-3 truncate">{h.name}</p>
+                    <p className="text-[11px] text-text-3 truncate">
+                      {h.kind === 'cash' && (lockedByAccount[h.account_id] ?? 0) > 0
+                        ? `${fmt(lockedByAccount[h.account_id])} locked`
+                        : h.name}
+                    </p>
                   </div>
                   <div onClick={(e) => { e.stopPropagation(); setMobileIdx(i => (i + 1) % MOBILE_METRICS.length) }}>
-                    {mobileMetric.render(h)}
+                    {mobileMetric.render(h, fmt)}
                   </div>
                 </div>
               ))}
@@ -361,4 +419,26 @@ function SortableTh({ label, sortKey, current, dir, onSort }: {
 function SortArrow({ active, dir }: { active: boolean; dir: Dir }) {
   if (!active) return <span className="opacity-30"><ChevronUp size={11} /></span>
   return dir === 'asc' ? <ChevronUp size={11} className="text-accent" /> : <ChevronDown size={11} className="text-accent" />
+}
+
+function AccountPill({ active, onClick, label, color }: {
+  active: boolean
+  onClick: () => void
+  label: string
+  color?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[12.5px] font-medium transition-colors',
+        active
+          ? 'bg-accent-soft text-accent'
+          : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'
+      )}
+    >
+      {color && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />}
+      {label}
+    </button>
+  )
 }

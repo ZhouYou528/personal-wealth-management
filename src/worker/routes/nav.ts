@@ -16,8 +16,8 @@ app.get('/', async (c) => {
 // POST /api/nav/backfill — compute cost-basis snapshots for each transaction date
 // Called after bulk CSV import to populate historical chart data.
 app.post('/backfill', async (c) => {
-  const body = await c.req.json<{ accountId?: string }>().catch(() => ({}))
-  const { accountId } = body
+  const body = await c.req.json<{ accountId?: string }>().catch(() => ({} as { accountId?: string }))
+  const accountId = body.accountId
 
   async function backfillAccount(filterById: string | undefined, storeId: string) {
     const txs = await q.getAllTransactionsForHoldings(c.env.DB, filterById)

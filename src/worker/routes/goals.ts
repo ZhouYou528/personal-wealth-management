@@ -7,12 +7,13 @@ const uid = () => crypto.randomUUID().replace(/-/g, '').slice(0, 8)
 import * as q from '../db/queries'
 
 const GoalSchema = z.object({
-  name:     z.string().min(1),
-  target:   z.number().positive(),
-  current:  z.number().default(0),
-  deadline: z.string(),
-  color:    z.string().default('#10B981'),
-  icon:     z.string().default('🎯'),
+  name:        z.string().min(1),
+  target:      z.number().positive(),
+  current:     z.number().default(0),
+  deadline:    z.string(),
+  color:       z.string().default('#10B981'),
+  icon:        z.string().default('🎯'),
+  account_ids: z.array(z.string()).optional(),    // linked accounts → auto-tracked current
 })
 
 const app = new Hono<{ Bindings: Env }>()

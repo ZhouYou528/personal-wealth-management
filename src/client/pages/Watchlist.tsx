@@ -5,11 +5,12 @@ import { watchlist as watchlistApi, market } from '@/lib/api'
 import { Glyph } from '@/components/Glyph'
 import { ChangePill } from '@/components/ChangePill'
 import { Button } from '@/components/ui/button'
-import { fmtMoney } from '@/lib/utils'
+import { useMoney } from '@/lib/money'
 import type { TickerSearchResult } from '@shared/types'
 
 export function Watchlist() {
   const qc = useQueryClient()
+  const { fmt } = useMoney()
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<TickerSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -113,7 +114,7 @@ export function Watchlist() {
                     </div>
                   </td>
                   <td className="px-4 py-3 tabular text-text font-medium private-val">
-                    {q ? fmtMoney(q.price) : '—'}
+                    {q ? fmt(q.price) : '—'}
                   </td>
                   <td className="px-4 py-3">
                     {q ? <ChangePill pct={q.changePct} size="sm" /> : '—'}
@@ -121,7 +122,7 @@ export function Watchlist() {
                   <td className="px-4 py-3 tabular text-small">
                     {q ? (
                       <span className={q.change >= 0 ? 'text-up' : 'text-down'}>
-                        {q.change >= 0 ? '+' : ''}{fmtMoney(q.change)}
+                        {q.change >= 0 ? '+' : ''}{fmt(q.change)}
                       </span>
                     ) : '—'}
                   </td>

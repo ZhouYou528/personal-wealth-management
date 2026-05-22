@@ -134,23 +134,39 @@ export async function deleteWatchlistItem(db: D1Database, id: string): Promise<v
 
 // ---------- Goals ----------
 
+type GoalRow = Omit<Goal, 'account_ids'> & { account_ids: string | null }
+
+function parseGoal(row: GoalRow): Goal {
+  let ids: string[] | undefined
+  if (row.account_ids) {
+    try { ids = JSON.parse(row.account_ids) } catch { ids = undefined }
+  }
+  return { ...row, account_ids: ids }
+}
+
 export async function getGoals(db: D1Database): Promise<Goal[]> {
-  const { results } = await db.prepare('SELECT * FROM goals ORDER BY created_at ASC').all<Goal>()
-  return results
+  const { results } = await db.prepare('SELECT * FROM goals ORDER BY created_at ASC').all<GoalRow>()
+  return results.map(parseGoal)
 }
 
 export async function insertGoal(db: D1Database, g: Omit<Goal, 'created_at'>): Promise<void> {
+  const accountIdsJSON = g.account_ids && g.account_ids.length > 0 ? JSON.stringify(g.account_ids) : null
   await db.prepare(`
-    INSERT INTO goals (id, name, target, current, deadline, color, icon)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(g.id, g.name, g.target, g.current, g.deadline, g.color, g.icon).run()
+    INSERT INTO goals (id, name, target, current, deadline, color, icon, account_ids)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(g.id, g.name, g.target, g.current, g.deadline, g.color, g.icon, accountIdsJSON).run()
 }
 
 export async function updateGoal(db: D1Database, id: string, g: Partial<Omit<Goal, 'id' | 'created_at'>>): Promise<void> {
   const fields = Object.keys(g) as (keyof typeof g)[]
   if (fields.length === 0) return
   const set = fields.map(f => `${f} = ?`).join(', ')
-  const values = fields.map(f => g[f])
+  const values = fields.map(f => {
+    const v = g[f]
+    // Serialize the array column before binding
+    if (f === 'account_ids') return Array.isArray(v) && v.length > 0 ? JSON.stringify(v) : null
+    return v ?? null
+  })
   await db.prepare(`UPDATE goals SET ${set} WHERE id = ?`).bind(...values, id).run()
 }
 
