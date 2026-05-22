@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
-  RefreshCw, Menu, X, Wallet, BookOpen, Upload, Repeat, BarChart3,
+  RefreshCw, Menu, X, Wallet, BookOpen, Upload, Repeat, BarChart3, Scale,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/import',       label: 'Import',       icon: Upload },
   { to: '/recurring',    label: 'Recurring',    icon: Repeat },
   { to: '/insights',     label: 'Insights',     icon: BarChart3 },
+  { to: '/allocation',   label: 'Allocation',   icon: Scale },
 ]
 
 function NavItem({ to, label, icon: Icon }: (typeof NAV_ITEMS)[number]) {

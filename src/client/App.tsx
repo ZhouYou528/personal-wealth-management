@@ -13,6 +13,7 @@ import { Goals } from './pages/Goals'
 import { Import } from './pages/Import'
 import { Recurring } from './pages/Recurring'
 import { Insights } from './pages/Insights'
+import { Allocation } from './pages/Allocation'
 import { useStore } from './lib/store'
 
 const qc = new QueryClient({
@@ -48,7 +49,8 @@ function AppShell() {
           <Route path="goals" element={<Goals />} />
           <Route path="import" element={<Import />} />
           <Route path="recurring" element={<Recurring />} />
-          <Route path="insights"  element={<Insights />} />
+          <Route path="insights"   element={<Insights />} />
+          <Route path="allocation" element={<Allocation />} />
         </Route>
       </Routes>
       <AddTxModal />
