@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
   RefreshCw, Menu, X, Wallet, BookOpen, Upload, Repeat, BarChart3, Scale,
+  Moon, Sun,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
@@ -26,25 +27,21 @@ const SECONDARY_NAV = [
 
 type NavDef = { to: string; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }
 
-function NavItem({ to, label, icon: Icon, dark }: NavDef & { dark?: boolean }) {
+function NavItem({ to, label, icon: Icon }: NavDef) {
   return (
     <NavLink
       to={to}
       end={to === '/'}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150',
-          dark
-            ? isActive
-              ? 'bg-white/12 text-white'
-              : 'text-white/55 hover:bg-white/8 hover:text-white'
-            : isActive
-              ? 'bg-accent-soft text-accent'
-              : 'text-text-2 hover:bg-surface-2 hover:text-text'
+          'flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150',
+          isActive
+            ? 'bg-accent-soft text-accent'
+            : 'text-text-2 hover:bg-surface-2 hover:text-text'
         )
       }
     >
-      <Icon size={15} strokeWidth={1.75} />
+      <Icon size={16} strokeWidth={1.75} />
       {label}
     </NavLink>
   )
@@ -52,12 +49,12 @@ function NavItem({ to, label, icon: Icon, dark }: NavDef & { dark?: boolean }) {
 
 function Sidebar({ onClose }: { onClose?: () => void }) {
   return (
-    <aside className="flex flex-col h-full w-56 bg-[#111827] dark:bg-surface border-r border-white/8 dark:border-border px-3 py-4">
+    <aside className="flex flex-col h-full w-56 bg-surface border-r border-border px-3 py-4">
       {/* Logo */}
       <div className="flex items-center justify-between px-2 mb-5">
-        <span className="font-display text-[19px] text-white dark:text-text italic tracking-tight">Meridian</span>
+        <span className="font-display text-[19px] text-text italic tracking-tight">Meridian</span>
         {onClose && (
-          <button onClick={onClose} className="text-white/40 hover:text-white p-0.5 transition-colors dark:text-text-3 dark:hover:text-text">
+          <button onClick={onClose} className="text-text-3 hover:text-text p-0.5 transition-colors">
             <X size={18} />
           </button>
         )}
@@ -65,13 +62,13 @@ function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Primary nav */}
       <nav className="flex flex-col gap-0.5 flex-1">
-        {PRIMARY_NAV.map((item) => <NavItem key={item.to} {...item} dark />)}
+        {PRIMARY_NAV.map((item) => <NavItem key={item.to} {...item} />)}
 
         {/* Divider */}
-        <div className="my-2 border-t border-white/10 dark:border-border/60" />
+        <div className="my-2 border-t border-border/60" />
 
-        {/* Secondary nav — slightly smaller */}
-        {SECONDARY_NAV.map((item) => <NavItem key={item.to} {...item} dark />)}
+        {/* Secondary nav */}
+        {SECONDARY_NAV.map((item) => <NavItem key={item.to} {...item} />)}
       </nav>
 
       {/* Status indicator */}
@@ -84,14 +81,14 @@ function StatusDot() {
   return (
     <div className="flex items-center gap-2 px-3 py-2">
       <span className="w-1.5 h-1.5 rounded-full bg-up pulse-dot" />
-      <span className="text-[11px] text-white/35 dark:text-text-3 uppercase tracking-wider">Live · Finnhub</span>
+      <span className="text-[11px] text-text-3 uppercase tracking-wider">Live · Finnhub</span>
     </div>
   )
 }
 
 export function Layout() {
   const { privacyMode, togglePrivacy, mobileNavOpen, setMobileNavOpen, openAddTx,
-          currency, setCurrency } = useStore()
+          currency, setCurrency, darkMode, toggleDarkMode } = useStore()
   const qc = useQueryClient()
   const isFetching = useIsFetching()
 
@@ -145,6 +142,15 @@ export function Layout() {
                 title="Refresh"
               >
                 <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleDarkMode}
+                title={darkMode ? 'Light mode' : 'Dark mode'}
+              >
+                {darkMode ? <Sun size={14} /> : <Moon size={14} />}
               </Button>
 
               <Button
