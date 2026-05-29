@@ -153,6 +153,10 @@ export function AddTxModal() {
     prefilledForOpenRef.current = true
     if (addTxPrefill?.type) { setType(addTxPrefill.type as TxType); setStep('form') }
     if (addTxPrefill?.symbol) setSymbol(addTxPrefill.symbol)
+    if (addTxPrefill?.optionType) setOptionType(addTxPrefill.optionType)
+    if (addTxPrefill?.strike) setStrike(addTxPrefill.strike)
+    if (addTxPrefill?.expiry) setExpiry(addTxPrefill.expiry)
+    if (addTxPrefill?.qty) setQty(addTxPrefill.qty)
     if (addTxPrefill?.accountId) {
       setAccountId(addTxPrefill.accountId)
       const acc = accs.find(a => a.id === addTxPrefill.accountId)
@@ -332,7 +336,7 @@ export function AddTxModal() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Date">
                   <input type="date" value={date} onChange={e => setDate(e.target.value)} className="field-input" />
                 </Field>
@@ -414,26 +418,36 @@ export function AddTxModal() {
               )}
 
               {fields.includes('optionFields') && (
-                <div className="grid grid-cols-3 gap-4">
-                  <Field label="Type">
-                    <div className="flex gap-2">
-                      {(['call', 'put'] as const).map(ot => (
-                        <button key={ot} onClick={() => setOptionType(ot)}
-                          className={`flex-1 py-1.5 rounded-sm text-small font-medium border capitalize transition-colors ${
-                            optionType === ot ? 'border-accent bg-accent-soft text-accent' : 'border-border text-text-2'
-                          }`}>
-                          {ot}
-                        </button>
-                      ))}
-                    </div>
-                  </Field>
-                  <Field label="Strike">
-                    <input type="number" value={strike} onChange={e => setStrike(e.target.value)} placeholder="540" className="field-input" />
-                  </Field>
-                  <Field label="Expiry">
-                    <input type="date" value={expiry} onChange={e => setExpiry(e.target.value)} className="field-input" />
-                  </Field>
-                </div>
+                addTxPrefill?.hideOptionFields ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-surface-2 text-small text-text-2">
+                    <span className="capitalize font-medium text-text">{optionType}</span>
+                    <span className="text-text-3">·</span>
+                    <span>Strike {strike}</span>
+                    <span className="text-text-3">·</span>
+                    <span>Exp {expiry}</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-4">
+                    <Field label="Type">
+                      <div className="flex gap-2">
+                        {(['call', 'put'] as const).map(ot => (
+                          <button key={ot} onClick={() => setOptionType(ot)}
+                            className={`flex-1 py-1.5 rounded-sm text-small font-medium border capitalize transition-colors ${
+                              optionType === ot ? 'border-accent bg-accent-soft text-accent' : 'border-border text-text-2'
+                            }`}>
+                            {ot}
+                          </button>
+                        ))}
+                      </div>
+                    </Field>
+                    <Field label="Strike">
+                      <input type="number" value={strike} onChange={e => setStrike(e.target.value)} placeholder="540" className="field-input" />
+                    </Field>
+                    <Field label="Expiry">
+                      <input type="date" value={expiry} onChange={e => setExpiry(e.target.value)} className="field-input" />
+                    </Field>
+                  </div>
+                )
               )}
 
               {(fields.includes('qty') || fields.includes('price')) && (() => {
@@ -442,7 +456,11 @@ export function AddTxModal() {
                 const cols = 1 + (showPrice ? 1 : 0) + (showTotal ? 1 : 0)
                 const priceLabel = type === 'transfer_in' ? 'Cost basis / share' : 'Price'
                 return (
-                  <div className={`grid gap-4 ${cols === 3 ? 'grid-cols-3' : cols === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                  <div className={`grid gap-4 ${
+                    cols === 3 ? 'grid-cols-2 sm:grid-cols-3'
+                    : cols === 2 ? 'grid-cols-2'
+                    : 'grid-cols-1'
+                  }`}>
                     <Field label="Quantity">
                       <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="10" className="field-input" />
                     </Field>
@@ -452,7 +470,7 @@ export function AddTxModal() {
                       </Field>
                     )}
                     {showTotal && (
-                      <Field label="Total">
+                      <Field label="Total" className={cols === 3 ? 'col-span-2 sm:col-span-1' : ''}>
                         <input type="number" value={total} onChange={e => setTotal(e.target.value)} placeholder="0.00" className="field-input" />
                       </Field>
                     )}
@@ -499,9 +517,9 @@ export function AddTxModal() {
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div>
+    <div className={className}>
       <label className="text-micro text-text-3 uppercase tracking-wider block mb-1.5">{label}</label>
       {children}
     </div>

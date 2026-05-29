@@ -36,4 +36,4 @@ ENVIRONMENT = "development"
 # --- Cron triggers ---
 # 22:00 UTC daily (~6pm ET / ~3pm PT) — ~2h after US market close so prices have settled.
 [triggers]
-crons = ["0 22 * * *"]
+crons = ["0 22 * * *", "0 14,15,16,17,18,19,20 * * 1-5"]

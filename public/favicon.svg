@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10d9a0"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#112258"/>
+  <!-- inner content scaled down to add padding from corners -->
+  <g transform="translate(16,16) scale(0.82) translate(-16,-16)">
+    <!-- bars -->
+    <rect x="3.5" y="18" width="5.5" height="10" rx="0.5" fill="url(#g)"/>
+    <rect x="12"  y="13" width="5.5" height="15" rx="0.5" fill="url(#g)"/>
+    <rect x="20.5" y="7" width="5.5" height="21" rx="0.5" fill="url(#g)"/>
+    <!-- zigzag connecting peaks, extending to arrow -->
+    <polyline
+      points="6.5,18 13,10 14.5,13 23.5,4"
+      stroke="url(#g)" stroke-width="2.4"
+      stroke-linecap="round" stroke-linejoin="round"
+      fill="none"/>
+    <!-- arrowhead -->
+    <polyline
+      points="18.5,3 24,4 23,9.5"
+      stroke="url(#g)" stroke-width="2.4"
+      stroke-linecap="round" stroke-linejoin="round"
+      fill="none"/>
+  </g>
+</svg>

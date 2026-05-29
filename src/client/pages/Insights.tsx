@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { TrendingUp, TrendingDown, DollarSign, CalendarClock, Wallet, PiggyBank } from 'lucide-react'
+import { TrendingUp, TrendingDown, DollarSign, CalendarClock, Wallet, PiggyBank, Activity } from 'lucide-react'
 import { transactions as txApi, accounts as accountsApi } from '@/lib/api'
 import { useMoney } from '@/lib/money'
 import { fmtDate, todayISO, cn } from '@/lib/utils'
@@ -12,12 +12,26 @@ import {
   sumRealizedInRange,
 } from '@shared/insights'
 
+const TRADE_TYPES = ['buy','sell','buy_option','sell_option','buy_crypto','sell_crypto','transfer_in','transfer_out'] as const
+const TRADE_META: Record<string, { label: string; color: string }> = {
+  buy:          { label: 'Stock buy',    color: '#10B981' },
+  sell:         { label: 'Stock sell',   color: '#EF4444' },
+  buy_option:   { label: 'Option buy',   color: '#F59E0B' },
+  sell_option:  { label: 'Option sell',  color: '#8B5CF6' },
+  buy_crypto:   { label: 'Crypto buy',   color: '#F97316' },
+  sell_crypto:  { label: 'Crypto sell',  color: '#EF4444' },
+  transfer_in:  { label: 'Transfer in',  color: '#6B7280' },
+  transfer_out: { label: 'Transfer out', color: '#6B7280' },
+}
+
 export function Insights() {
   const { fmt } = useMoney()
   const today = todayISO()
   const currentYear = today.slice(0, 4)
   const yearStart = `${currentYear}-01-01`
   const yearEnd   = `${currentYear}-12-31`
+
+  const [activityBroker, setActivityBroker] = useState<string>('All')
 
   // Pull all transactions in one shot; insights compute client-side.
   const { data: txs = [], isLoading } = useQuery({
@@ -36,6 +50,36 @@ export function Insights() {
 
   const ytdRealized   = useMemo(() => sumRealizedInRange(realizations, yearStart, yearEnd), [realizations, yearStart, yearEnd])
   const allRealized   = useMemo(() => realizations.reduce((s, r) => s + r.realized, 0), [realizations])
+
+  // Unique brokers for activity filter
+  const brokers = useMemo(() =>
+    [...new Set(accs.map(a => a.institution))].sort(), [accs])
+
+  // Account IDs belonging to the selected broker
+  const brokerAccIds = useMemo(() =>
+    activityBroker === 'All'
+      ? null
+      : new Set(accs.filter(a => a.institution === activityBroker).map(a => a.id)),
+    [accs, activityBroker])
+
+  // Trade counts for the selected broker + current year
+  const activityStats = useMemo(() => {
+    const filtered = txs.filter(tx =>
+      tx.tx_date >= yearStart &&
+      tx.tx_date <= yearEnd &&
+      TRADE_TYPES.includes(tx.type as typeof TRADE_TYPES[number]) &&
+      (brokerAccIds === null || brokerAccIds.has(tx.account_id))
+    )
+    const counts: Record<string, number> = {}
+    for (const tx of filtered) {
+      counts[tx.type] = (counts[tx.type] ?? 0) + 1
+    }
+    const total = Object.values(counts).reduce((s, n) => s + n, 0)
+    const rows = TRADE_TYPES
+      .map(t => ({ type: t, count: counts[t] ?? 0, ...TRADE_META[t] }))
+      .filter(r => r.count > 0)
+    return { total, rows }
+  }, [txs, yearStart, yearEnd, brokerAccIds])
 
   const topWinners = useMemo(() =>
     [...realizations].filter(r => r.sell_date >= yearStart).sort((a, b) => b.realized - a.realized).slice(0, 5),
@@ -61,7 +105,7 @@ export function Insights() {
   }
 
   return (
-    <div className="p-4 sm:p-8 max-w-6xl mx-auto space-y-4">
+    <div className="p-4 sm:p-8 max-w-6xl mx-auto space-y-6">
       <div>
         <h1 className="text-page-title text-text">Insights</h1>
         <p className="text-small text-text-3 mt-0.5">
@@ -178,6 +222,55 @@ export function Insights() {
           Only counts deposit transactions. Share transfers (ACAT/transfer_in) are excluded since
           they're moved-in assets, not new contributions.
         </p>
+      </div>
+
+      {/* ── Trading Activity ─────────────────────────────────────── */}
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Activity size={15} className="text-text-3" />
+          <h2 className="text-section-h2 text-text">Trading activity — {currentYear}</h2>
+        </div>
+
+        {/* Broker filter */}
+        <div className="flex gap-1.5 flex-wrap mb-5">
+          {['All', ...brokers].map(b => (
+            <button
+              key={b}
+              onClick={() => setActivityBroker(b)}
+              className={cn(
+                'px-3 py-1 rounded-full text-[12px] font-medium transition-colors',
+                activityBroker === b
+                  ? 'bg-accent text-white'
+                  : 'bg-surface-2 text-text-2 hover:bg-surface-3'
+              )}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+
+        {/* Total count */}
+        <div className="flex items-baseline gap-2 mb-5">
+          <span className="text-[36px] font-bold text-text tabular">{activityStats.total}</span>
+          <span className="text-text-3 text-small">
+            trade{activityStats.total === 1 ? '' : 's'}
+            {activityBroker !== 'All' ? ` · ${activityBroker}` : ''}
+          </span>
+        </div>
+
+        {/* Breakdown by type */}
+        {activityStats.total === 0 ? (
+          <p className="text-small text-text-3">No trades recorded yet.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {activityStats.rows.map(r => (
+              <div key={r.type} className="p-3 rounded-xl bg-surface-2">
+                <p className="text-[11px] text-text-3 mb-1">{r.label}</p>
+                <p className="text-[24px] font-bold tabular" style={{ color: r.color }}>{r.count}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Options detail ───────────────────────────────────────── */}

@@ -175,7 +175,7 @@ export function Holdings() {
         <div>
           <h1 className="text-page-title text-text">Holdings</h1>
           <p className="text-small text-text-3 tabular mt-0.5">
-            {allHoldings.length} positions · {fmt(totalValue)} total value
+            {allHoldings.length} positions · <span className="private-val">{fmt(totalValue)}</span> total value
           </p>
         </div>
       </div>
@@ -273,8 +273,8 @@ export function Holdings() {
                               return `${dte}d to expiry`
                             })() : h.kind === 'cash' && (lockedByAccount[h.account_id] ?? 0) > 0 ? (
                               <>
-                                <span className="text-warn">{fmt(lockedByAccount[h.account_id])}</span> locked ·{' '}
-                                <span className="text-text-2">{fmt(h.value - lockedByAccount[h.account_id])}</span> available
+                                <span className="text-warn private-val">{fmt(lockedByAccount[h.account_id])}</span> locked ·{' '}
+                                <span className="text-text-2 private-val">{fmt(h.value - lockedByAccount[h.account_id])}</span> available
                               </>
                             ) : h.name}
                           </p>

@@ -45,6 +45,16 @@ function findSnapBefore(snaps: NavSnapshot[], targetDate: string): NavSnapshot |
 
 // ── Custom tooltip ────────────────────────────────────────────
 
+function fmtSnapLabel(snap_date: string): string {
+  if (snap_date.includes('T')) {
+    // Intraday: "2026-05-27T14" → "May 27, 14:00 UTC"
+    const hour = snap_date.slice(11).padStart(2, '0')
+    const d = new Date(`${snap_date.slice(0, 10)}T${hour}:00:00Z`)
+    return d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }) + ` ${hour}:00 UTC`
+  }
+  return fmtDate(snap_date)
+}
+
 function ChartTooltip({ active, payload, label }: {
   active?: boolean
   payload?: { value: number }[]
@@ -54,7 +64,7 @@ function ChartTooltip({ active, payload, label }: {
   if (!active || !payload?.length || !label) return null
   return (
     <div className="bg-surface border border-border rounded-lg px-3 py-2 shadow-lg text-small pointer-events-none">
-      <p className="text-text-3 text-[11px] mb-0.5">{fmtDate(label)}</p>
+      <p className="text-text-3 text-[11px] mb-0.5">{fmtSnapLabel(label)}</p>
       <p className="tabular font-semibold text-text private-val">{fmt(payload[0].value)}</p>
     </div>
   )
@@ -73,12 +83,63 @@ function NavChart({
   const today = todayISO()
 
   const chartData = useMemo(() => {
+    if (range === '1D') {
+      // Anchor: most recent daily (non-intraday) snapshot before today → yesterday's close
+      const anchor = [...navData]
+        .filter(s => !s.snap_date.includes('T') && s.snap_date < today)
+        .sort((a, b) => a.snap_date.localeCompare(b.snap_date))
+        .at(-1)
+
+      // Collect real intraday snapshots for today into an hour → value map
+      const snapByHour = new Map<number, number>()
+      for (const s of navData) {
+        if (s.snap_date.startsWith(today) && s.snap_date.includes('T')) {
+          snapByHour.set(parseInt(s.snap_date.slice(11), 10), s.value)
+        }
+      }
+      // Pin current hour to the live holdings value
+      const currentHour = new Date().getUTCHours()
+      snapByHour.set(currentHour, currentValue)
+      const sortedHours = [...snapByHour.keys()].sort((a, b) => a - b)
+
+      // Interpolate to fill every hour 0..currentHour
+      const intradayPts: { date: string; value: number }[] = []
+      for (let h = 0; h <= currentHour; h++) {
+        const dateKey = `${today}T${String(h).padStart(2, '0')}`
+        if (snapByHour.has(h)) {
+          intradayPts.push({ date: dateKey, value: snapByHour.get(h)! })
+        } else {
+          const before = sortedHours.filter(sh => sh < h).at(-1)
+          const after  = sortedHours.find(sh => sh > h)
+          let value: number
+          if (before === undefined) {
+            // Before first real data → flat at anchor close or first snapshot
+            value = anchor?.value ?? snapByHour.get(sortedHours[0])!
+          } else if (after === undefined) {
+            value = snapByHour.get(before)!
+          } else {
+            const t = (h - before) / (after - before)
+            value = snapByHour.get(before)! + t * (snapByHour.get(after)! - snapByHour.get(before)!)
+          }
+          intradayPts.push({ date: dateKey, value })
+        }
+      }
+
+      return anchor
+        ? [{ date: anchor.snap_date, value: anchor.value }, ...intradayPts]
+        : intradayPts
+    }
+
+    // Non-1D ranges: one point per day, no intraday T-points
     const since = daysAgoDate(RANGE_DAYS[range])
     const pts = navData
-      .filter(s => s.snap_date >= since)
+      .filter(s => {
+        if (s.snap_date < since) return false
+        if (s.snap_date.includes('T')) return false
+        return true
+      })
       .map(s => ({ date: s.snap_date, value: s.value }))
 
-    // Upsert today's live value
     if (pts.length > 0 && pts[pts.length - 1].date === today) {
       pts[pts.length - 1].value = currentValue
     } else {
@@ -96,7 +157,10 @@ function NavChart({
   }
 
   const tickFmt = (v: string) => {
-    if (range === '1D') return v.slice(5).replace('-', '/')
+    if (range === '1D') {
+      if (v.includes('T')) return v.slice(11).padStart(2, '0') + ':00'  // "14:00"
+      return v.slice(5).replace('-', '/')
+    }
     if (range === '1W' || range === '1M') return v.slice(5).replace('-', '/')
     if (range === '3M' || range === '1Y') return v.slice(0, 7)
     return v.slice(0, 4)
@@ -125,7 +189,10 @@ function NavChart({
             padding={{ left: 16, right: 16 }}
           />
           <YAxis hide domain={['auto', 'auto']} />
-          <Tooltip content={<ChartTooltip />} />
+          <Tooltip
+            content={<ChartTooltip />}
+            cursor={{ stroke: 'var(--color-border-strong, #d1d5db)', strokeWidth: 1, strokeDasharray: '4 3' }}
+          />
           <Area
             type="monotone"
             dataKey="value"
@@ -133,7 +200,7 @@ function NavChart({
             strokeWidth={2}
             fill={`url(#${gradId})`}
             dot={false}
-            activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
+            activeDot={{ r: 5, fill: color, strokeWidth: 2, stroke: 'var(--color-surface)' }}
           />
         </AreaChart>
       </ResponsiveContainer>
@@ -143,33 +210,9 @@ function NavChart({
 
 // ── Period stat cell ──────────────────────────────────────────
 
-function PeriodStat({ label, change, pct, pending }: {
-  label: string; change: number; pct: number; pending?: boolean
-}) {
-  const { fmt } = useMoney()
-  if (pending) {
-    return (
-      <div>
-        <p className="text-micro text-text-3 uppercase tracking-wider mb-1">{label}</p>
-        <p className="tabular text-[15px] font-semibold text-text-3">—</p>
-        <p className="text-[11px] text-text-3" title="Pending — accumulates as the daily snapshot runs">
-          pending
-        </p>
-      </div>
-    )
-  }
-  const up = change >= 0
-  return (
-    <div>
-      <p className="text-micro text-text-3 uppercase tracking-wider mb-1">{label}</p>
-      <p className={cn('tabular text-[15px] font-semibold private-val', up ? 'text-up' : 'text-down')}>
-        {up ? '+' : ''}{fmt(change)}
-      </p>
-      <p className={cn('tabular text-[11px]', up ? 'text-up' : 'text-down')}>
-        {up ? '+' : ''}{pct.toFixed(2)}%
-      </p>
-    </div>
-  )
+const RANGE_LABEL: Record<string, string> = {
+  '1D': 'Today', '1W': 'Past week', '1M': 'Past month',
+  '3M': 'Past 3 months', '1Y': 'Past year', 'ALL': 'All time',
 }
 
 // ── Allocation donut ──────────────────────────────────────────
@@ -211,7 +254,7 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
     return [
       ...top.map((h, i) => ({
         key: h.id,
-        label: h.symbol === 'CASH' ? 'Cash' : (h.qty < 0 ? `${h.symbol} (short)` : h.symbol),
+        label: h.symbol === 'CASH' ? 'Cash' : (h.kind === 'option' ? `${h.symbol}*` : h.qty < 0 ? `${h.symbol} (short)` : h.symbol),
         val: absValue(h),
         color: HOLDING_COLORS[i % HOLDING_COLORS.length],
       })),
@@ -227,7 +270,7 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
     <div>
       {/* Mode toggle */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-small font-semibold text-text">Allocation</p>
+        <p className="text-[16px] sm:text-small font-bold sm:font-semibold text-text">Allocation</p>
         <div className="flex text-[11px] gap-0.5 bg-surface-2 rounded p-0.5">
           {(['holding', 'class'] as DonutMode[]).map(m => (
             <button
@@ -410,9 +453,6 @@ export function Dashboard() {
     pending: false,
   }
 
-  const weekChange    = periodChange(7)
-  const monthChange   = periodChange(30)
-  const yearChange    = periodChange(365)
   const allTimeChange = {
     change: currentValue - costBasis,
     pct: costBasis > 0 ? ((currentValue - costBasis) / costBasis) * 100 : 0,
@@ -423,7 +463,7 @@ export function Dashboard() {
   const chartColor = selectedPeriodChange.change >= 0 ? '#10B981' : '#EF4444'
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
 
       {/* ── Account filter pills ──────────────────────────── */}
       {accountsList.length > 1 && (
@@ -456,24 +496,24 @@ export function Dashboard() {
               {fmt(currentValue)}
             </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
-              <div className="flex items-center gap-1.5">
-                <span className={cn('tabular text-small font-medium private-val', todayChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  {todayChange.change >= 0 ? '+' : ''}{fmt(todayChange.change)}
-                </span>
-                <span className={cn('text-[11px]', todayChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  {todayChange.change >= 0 ? '+' : ''}{todayChange.pct.toFixed(2)}%
-                </span>
-                <span className="text-[11px] text-text-3">Today</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className={cn('tabular text-small font-medium private-val', allTimeChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  {allTimeChange.change >= 0 ? '+' : ''}{fmt(allTimeChange.change)}
-                </span>
-                <span className={cn('text-[11px]', allTimeChange.change >= 0 ? 'text-up' : 'text-down')}>
-                  ({allTimeChange.change >= 0 ? '+' : ''}{allTimeChange.pct.toFixed(2)}%)
-                </span>
-                <span className="text-[11px] text-text-3">All time</span>
-              </div>
+              {(() => {
+                const d = range === '1D' ? todayChange : selectedPeriodChange
+                const up = d.change >= 0
+                if (d.pending) return (
+                  <span className="text-[11px] text-text-3">{RANGE_LABEL[range]}: —</span>
+                )
+                return (
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn('tabular text-small font-medium private-val', up ? 'text-up' : 'text-down')}>
+                      {up ? '+' : ''}{fmt(d.change)}
+                    </span>
+                    <span className={cn('text-[11px]', up ? 'text-up' : 'text-down')}>
+                      ({up ? '+' : ''}{d.pct.toFixed(2)}%)
+                    </span>
+                    <span className="text-[11px] text-text-3">{RANGE_LABEL[range]}</span>
+                  </div>
+                )
+              })()}
               {locked > 0 && (
                 <div className="flex items-center gap-1.5" title="Cash held by your broker as collateral on open short puts">
                   <span className="tabular text-small font-medium text-warn private-val">
@@ -510,13 +550,6 @@ export function Dashboard() {
           color={chartColor}
         />
 
-        {/* Period stats — 2-col on mobile, 4-col from sm up */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mt-5 pt-4 border-t border-border/40">
-          <PeriodStat label="Today" {...todayChange} />
-          <PeriodStat label="Week"  {...weekChange} />
-          <PeriodStat label="Month" {...monthChange} />
-          <PeriodStat label="Year"  {...yearChange} />
-        </div>
       </div>
 
       {/* ── Bottom row ─────────────────────────────────────── */}
@@ -570,7 +603,7 @@ function AccountsHeader() {
   const navigate = useNavigate()
   return (
     <div className="flex items-center justify-between mb-3">
-      <p className="text-small font-semibold text-text">Accounts</p>
+      <p className="text-[16px] sm:text-small font-bold sm:font-semibold text-text">Accounts</p>
       <button
         onClick={() => navigate('/accounts')}
         className="flex items-center gap-0.5 text-[11px] text-accent hover:underline"
@@ -597,7 +630,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
   if (movable.length === 0) {
     return (
       <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
-        <p className="text-small font-semibold text-text mb-2">Top Movers</p>
+        <p className="text-[16px] sm:text-small font-bold sm:font-semibold text-text mb-2">Top Movers</p>
         <p className="text-[12px] text-text-3">
           Daily price changes will appear here after the next live quote refresh.
         </p>
@@ -611,7 +644,7 @@ function TopMovers({ holdings, onPick }: { holdings: Holding[]; onPick: (id: str
   return (
     <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 py-4 sm:py-5">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-small font-semibold text-text">Top Movers</p>
+        <p className="text-[16px] sm:text-small font-bold sm:font-semibold text-text">Top Movers</p>
         <p className="text-[11px] text-text-3">Today's price change</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
@@ -644,7 +677,9 @@ function MoverColumn({ title, icon, list, onPick }: {
         >
           <Glyph symbol={h.symbol} kind={h.kind} size="sm" />
           <div className="flex-1 min-w-0">
-            <p className="text-small font-medium text-text truncate">{h.symbol}</p>
+            <p className="text-small font-medium text-text truncate">
+              {h.symbol}{h.kind === 'option' && <sup className="text-accent text-[9px] ml-0.5">*</sup>}
+            </p>
           </div>
           <div className="text-right flex-shrink-0">
             <p className={cn('tabular text-small font-semibold', h.todayPct >= 0 ? 'text-up' : 'text-down')}>

@@ -59,23 +59,24 @@ export default {
     return assetRes
   },
 
-  // Daily cron — write a market-value snapshot per account + aggregate.
-  // Parallelizes quote fetches to stay under Workers Free 10ms CPU when possible.
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runDailySnapshot(env))
+  // Cron dispatcher: daily (22:00 UTC) fires recurring + end-of-day snapshot;
+  // intraday (14-20 UTC Mon-Fri) fires snapshot only.
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === '0 22 * * *') {
+      ctx.waitUntil(runDailySnapshot(env))
+    } else {
+      ctx.waitUntil(
+        runIntradaySnapshot(env).catch(e => console.error('intraday snapshot failed:', e))
+      )
+    }
   },
 }
 
-async function runDailySnapshot(env: Env): Promise<void> {
-  // Step 1: materialize any due recurring transactions BEFORE the snapshot,
-  // so today's NAV reflects them.
-  try {
-    const { fireAllRules } = await import('./lib/recurring')
-    await fireAllRules(env.DB)
-  } catch (e) {
-    console.error('fireAllRules failed:', e)
-  }
-
+// Shared: fetch all prices and compute per-account values.
+async function fetchPortfolioValues(env: Env): Promise<{
+  byAccount: Record<string, number>
+  aggregate: number
+}> {
   const { computeHoldings } = await import('./lib/positions')
   const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
 
@@ -85,7 +86,6 @@ async function runDailySnapshot(env: Env): Promise<void> {
   ])
   const holdings = computeHoldings(transactions)
 
-  // Collect symbols that need a live quote (skip CASH, options, anything already user-marked)
   const symbolsToFetch = new Set<string>()
   for (const h of holdings) {
     if (h.symbol === 'CASH' || h.kind === 'option') continue
@@ -93,7 +93,6 @@ async function runDailySnapshot(env: Env): Promise<void> {
     symbolsToFetch.add(h.symbol)
   }
 
-  // Fetch all quotes in parallel — KV cache first, fall back to provider
   const priceMap: Record<string, number> = {}
   await Promise.all([...symbolsToFetch].map(async (sym) => {
     const cached = await env.PRICE_CACHE.get(`quote:${sym}`, 'json') as { price: number } | null
@@ -107,14 +106,12 @@ async function runDailySnapshot(env: Env): Promise<void> {
     }
   }))
 
-  // Resolve price per holding with precedence: mark > live quote > cost basis
   function priceFor(h: typeof holdings[number]): number {
     if (h.symbol === 'CASH') return 1
     if (marks[h.id] != null) return marks[h.id]
     return priceMap[h.symbol] ?? h.cost
   }
 
-  // Sum per account, plus aggregate
   const byAccount: Record<string, number> = {}
   let aggregate = 0
   for (const h of holdings) {
@@ -122,11 +119,36 @@ async function runDailySnapshot(env: Env): Promise<void> {
     byAccount[h.account_id] = (byAccount[h.account_id] ?? 0) + v
     aggregate += v
   }
+  return { byAccount, aggregate }
+}
 
+// Daily 22:00 UTC — fire recurring transactions then write end-of-day snapshot (snap_hour=23).
+async function runDailySnapshot(env: Env): Promise<void> {
+  try {
+    const { fireAllRules } = await import('./lib/recurring')
+    await fireAllRules(env.DB)
+  } catch (e) {
+    console.error('fireAllRules failed:', e)
+  }
+
+  const { byAccount, aggregate } = await fetchPortfolioValues(env)
   const today = new Date().toISOString().split('T')[0]
   await Promise.all([
-    q.upsertNavSnapshot(env.DB, { snap_date: today, account_id: '', value: aggregate, source: 'market' }),
+    q.upsertNavSnapshot(env.DB, { snap_date: today, snap_hour: 23, account_id: '', value: aggregate, source: 'market' }),
     ...Object.entries(byAccount).map(([account_id, value]) =>
-      q.upsertNavSnapshot(env.DB, { snap_date: today, account_id, value, source: 'market' })),
+      q.upsertNavSnapshot(env.DB, { snap_date: today, snap_hour: 23, account_id, value, source: 'market' })),
+  ])
+}
+
+// Intraday every 30 min during market hours (14-20 UTC Mon-Fri) — snapshot only, no recurring.
+async function runIntradaySnapshot(env: Env): Promise<void> {
+  const { byAccount, aggregate } = await fetchPortfolioValues(env)
+  const now = new Date()
+  const today = now.toISOString().split('T')[0]
+  const snap_hour = now.getUTCHours()
+  await Promise.all([
+    q.upsertNavSnapshot(env.DB, { snap_date: today, snap_hour, account_id: '', value: aggregate, source: 'market' }),
+    ...Object.entries(byAccount).map(([account_id, value]) =>
+      q.upsertNavSnapshot(env.DB, { snap_date: today, snap_hour, account_id, value, source: 'market' })),
   ])
 }

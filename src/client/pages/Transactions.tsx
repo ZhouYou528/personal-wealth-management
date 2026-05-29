@@ -27,6 +27,9 @@ const TX_GROUPS: Record<string, { label: string; color: string }> = {
   split:        { label: 'Split',        color: '#7C3AED' },
 }
 
+function isOptCash(note?: string | null) { return !!note?.startsWith('[opt-cash:') }
+function stripOptPrefix(note: string) { return note.replace(/^\[opt-cash:[^\]]+\]\s*/, '') }
+
 function groupByDay(txs: Transaction[]): [string, Transaction[]][] {
   const map = new Map<string, Transaction[]>()
   for (const tx of txs) {
@@ -242,10 +245,17 @@ export function Transactions() {
               <p className="text-micro text-text-3 uppercase tracking-wider mb-2">{dayLabel(day)}</p>
               <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush divide-y divide-border">
                 {txs.map(tx => {
-                  const meta = TX_GROUPS[tx.type]
+                  const optCash = isOptCash(tx.note)
+                  const meta = optCash
+                    ? { label: tx.type === 'deposit' ? 'Premium Received' : 'Premium Paid',
+                        color: tx.type === 'deposit' ? '#10B981' : '#EF4444' }
+                    : TX_GROUPS[tx.type]
+                  const displayNote = tx.note
+                    ? (optCash ? stripOptPrefix(tx.note) : tx.note)
+                    : null
                   return (
                     <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2 group">
-                      {tx.symbol ? (
+                      {tx.symbol && !optCash ? (
                         <Glyph symbol={tx.symbol} kind={tx.kind ?? 'stock'} size="sm" />
                       ) : (
                         <span className="w-7 h-7 rounded-sm flex items-center justify-center text-[11px] font-bold"
@@ -259,7 +269,7 @@ export function Transactions() {
                           <span className="text-small font-medium" style={{ color: meta?.color }}>
                             {meta?.label}
                           </span>
-                          {tx.symbol && (
+                          {tx.symbol && !optCash && (
                             <span className="text-small text-text font-medium">
                               {(tx.type === 'buy_option' || tx.type === 'sell_option')
                                 ? fmtOptionLabel({ ...tx, symbol: tx.symbol })
@@ -274,13 +284,13 @@ export function Transactions() {
                             <span className="text-[11px] text-text-3">
                               {fmtQty(tx.qty)} shares
                             </span>
-                          ) : tx.qty ? (
+                          ) : tx.qty && !optCash ? (
                             <span className="text-[11px] text-text-3">
                               {fmtQty(tx.qty)} @ {fmt(tx.price ?? 0)}
                             </span>
                           ) : null}
                         </div>
-                        {tx.note && <p className="text-[11px] text-text-3 truncate">{tx.note}</p>}
+                        {displayNote && <p className="text-[11px] text-text-3 truncate">{displayNote}</p>}
                       </div>
 
                       {accMap[tx.account_id] && (

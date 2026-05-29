@@ -200,6 +200,8 @@ export function computeContributions(
   for (const tx of transactions) {
     if (tx.type !== 'deposit') continue
     if (tx.tx_date < yearStart || tx.tx_date > yearEnd) continue
+    // Exclude auto-generated option premium companion transactions
+    if (tx.note?.startsWith('[opt-cash:')) continue
     byAccount[tx.account_id] = (byAccount[tx.account_id] ?? 0) + tx.total
     total += tx.total
   }

@@ -131,7 +131,8 @@ export interface CalendarEvent {
 export type NavSnapshotSource = 'cost' | 'market'
 
 export interface NavSnapshot {
-  snap_date: string
+  snap_date: string     // YYYY-MM-DD for daily; YYYY-MM-DDTHH:MM for intraday today
+  snap_hour?: number    // 0-23; only used when writing
   account_id?: string
   value: number
   source?: NavSnapshotSource

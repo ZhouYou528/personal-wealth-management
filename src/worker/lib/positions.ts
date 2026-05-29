@@ -141,7 +141,7 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
             multiplier: 100,
           })
         }
-        adjustCash(map, tx.account_id, -tx.total)
+        // Cash handled by companion withdraw transaction (see 0002_option_cash migration)
         break
       }
 
@@ -167,7 +167,7 @@ export function computeHoldings(transactions: Transaction[]): Omit<Holding, 'nam
             multiplier: 100,
           })
         }
-        adjustCash(map, tx.account_id, tx.total)
+        // Cash handled by companion deposit transaction (see 0002_option_cash migration)
         break
       }
 

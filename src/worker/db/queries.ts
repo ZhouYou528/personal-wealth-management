@@ -191,20 +191,36 @@ export async function getNavSnapshots(
   accountId?: string
 ): Promise<NavSnapshot[]> {
   const id = accountId ?? ''
-  const { results } = await db.prepare(
-    `SELECT snap_date, account_id, value, source FROM nav_snapshots
-       WHERE account_id = ? AND snap_date >= date('now', '-${days} days')
-       ORDER BY snap_date ASC`
-  ).bind(id).all<NavSnapshot>()
+  // Historical days (before today): return one point per day — the latest snap_hour.
+  // Today: return all intraday points with snap_date encoded as YYYY-MM-DDTHH so the
+  // chart can show hourly resolution on the 1D view.
+  const { results } = await db.prepare(`
+    SELECT snap_date, account_id, value, source
+    FROM nav_snapshots n
+    WHERE account_id = ?
+      AND snap_date < date('now')
+      AND snap_date >= date('now', '-${days} days')
+      AND snap_hour = (
+        SELECT MAX(snap_hour) FROM nav_snapshots
+        WHERE snap_date = n.snap_date AND account_id = n.account_id
+      )
+    UNION ALL
+    SELECT snap_date || 'T' || printf('%02d', snap_hour) AS snap_date,
+           account_id, value, source
+    FROM nav_snapshots
+    WHERE account_id = ? AND snap_date = date('now')
+    ORDER BY snap_date ASC
+  `).bind(id, id).all<NavSnapshot>()
   return results
 }
 
 export async function upsertNavSnapshot(db: D1Database, snap: NavSnapshot): Promise<void> {
   const source = snap.source ?? 'cost'
+  const snap_hour = snap.snap_hour ?? 23
   await db.prepare(`
-    INSERT INTO nav_snapshots (snap_date, account_id, value, source) VALUES (?, ?, ?, ?)
-    ON CONFLICT(snap_date, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
-  `).bind(snap.snap_date, snap.account_id ?? '', snap.value, source).run()
+    INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
+  `).bind(snap.snap_date, snap_hour, snap.account_id ?? '', snap.value, source).run()
 }
 
 // ---------- Holding marks (user-set current prices) ----------

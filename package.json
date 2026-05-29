@@ -9,6 +9,7 @@
     "deploy": "npm run build && wrangler deploy",
     "migrate:local": "wrangler d1 execute pwm_db --local --file=migrations/0001_schema.sql",
     "migrate:prod": "wrangler d1 execute pwm_db --remote --file=migrations/0001_schema.sql",
+    "migrate:option-cash": "wrangler d1 execute pwm_db --remote --file=migrations/0002_option_cash.sql",
     "type-check": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:watch": "vitest"

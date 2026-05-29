@@ -15,13 +15,16 @@ import { useStore } from '@/lib/store'
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1 min-w-0">
       <p className="text-micro text-text-3 uppercase tracking-wider">{label}</p>
-      <p className="tabular font-semibold text-[18px] text-text private-val">{value}</p>
-      {sub && <p className="text-[11px] text-text-3">{sub}</p>}
+      <p className="tabular font-semibold text-[14px] sm:text-[18px] text-text private-val truncate">{value}</p>
+      {sub && <p className="text-[11px] text-text-3 truncate">{sub}</p>}
     </div>
   )
 }
+
+function isOptCash(note?: string | null) { return !!note?.startsWith('[opt-cash:') }
+function stripOptPrefix(note: string) { return note.replace(/^\[opt-cash:[^\]]+\]\s*/, '') }
 
 export function HoldingDetail() {
   const { id } = useParams<{ id: string }>()
@@ -45,6 +48,7 @@ export function HoldingDetail() {
   }, [isLoading, isFetching, holding, navigate])
 
   const isCash = holding?.kind === 'cash'
+  // Include deposit/withdraw (covers both real cash moves and option premium companions)
   const CASH_TX_TYPES = new Set(['deposit', 'withdraw', 'interest', 'dividend', 'transfer'])
 
   const { data: txs = [] } = useQuery({
@@ -192,7 +196,16 @@ export function HoldingDetail() {
                 >
                   Expire worthless
                 </Button>
-                <Button size="sm" onClick={() => openAddTx({ symbol: holding.symbol, type: 'sell_option' })}>
+                <Button size="sm" onClick={() => openAddTx({
+                  symbol: holding.symbol,
+                  type: holding.qty < 0 ? 'buy_option' : 'sell_option',
+                  accountId: holding.account_id,
+                  optionType: holding.option_type ?? undefined,
+                  strike: holding.strike != null ? String(holding.strike) : undefined,
+                  expiry: holding.expiry ?? undefined,
+                  qty: String(Math.abs(holding.qty)),
+                  hideOptionFields: true,
+                })}>
                   Close position
                 </Button>
               </>
@@ -310,26 +323,39 @@ export function HoldingDetail() {
               (tx.option_type === holding.option_type
                 && tx.strike === holding.strike
                 && tx.expiry === holding.expiry))
-            .map(tx => (
-            <div key={tx.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-              <div>
-                <span className="text-small font-medium text-text capitalize">
-                  {TX_LABELS[tx.type] ?? tx.type}
-                </span>
-                {tx.qty && (
-                  <span className="text-[11px] text-text-3 ml-1.5">
-                    {fmtQty(tx.qty)} @ {fmt(tx.price ?? 0)}
-                  </span>
-                )}
-              </div>
-              <div className="text-right">
-                <p className="tabular text-small font-medium text-text private-val">
-                  {fmt(Math.abs(tx.total))}
-                </p>
-                <p className="text-[11px] text-text-3">{fmtDate(tx.tx_date)}</p>
-              </div>
-            </div>
-          ))}
+            .map(tx => {
+              const optCash = isOptCash(tx.note)
+              const label = optCash
+                ? (tx.type === 'deposit' ? 'Option Premium' : 'Option Premium Paid')
+                : (TX_LABELS[tx.type] ?? tx.type)
+              const labelColor = optCash
+                ? (tx.type === 'deposit' ? '#10B981' : '#EF4444')
+                : undefined
+              const subNote = optCash && tx.note ? stripOptPrefix(tx.note) : null
+              return (
+                <div key={tx.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                  <div className="min-w-0 mr-3">
+                    <span className="text-small font-medium capitalize" style={labelColor ? { color: labelColor } : { color: 'var(--color-text)' }}>
+                      {label}
+                    </span>
+                    {subNote && (
+                      <p className="text-[11px] text-text-3 truncate">{subNote}</p>
+                    )}
+                    {!optCash && tx.qty && (
+                      <span className="text-[11px] text-text-3 ml-1.5">
+                        {fmtQty(tx.qty)} @ {fmt(tx.price ?? 0)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="tabular text-small font-medium text-text private-val">
+                      {fmt(Math.abs(tx.total))}
+                    </p>
+                    <p className="text-[11px] text-text-3">{fmtDate(tx.tx_date)}</p>
+                  </div>
+                </div>
+              )
+            })}
           {txs.length === 0 && (
             <p className="text-small text-text-3 py-4 text-center">No transactions</p>
           )}

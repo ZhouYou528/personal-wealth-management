@@ -30,7 +30,7 @@ const SECONDARY_NAV = [
 const BOTTOM_TABS = [
   { to: '/',             label: 'Home',         icon: LayoutDashboard },
   { to: '/holdings',     label: 'Holdings',     icon: Layers },
-  { to: '/transactions', label: 'Tx',           icon: List },
+  { to: '/transactions', label: 'Transactions',           icon: List },
   { to: '/watchlist',    label: 'Watchlist',    icon: BookOpen },
 ]
 
@@ -259,7 +259,7 @@ export function Layout() {
         </header>
 
         {/* Page content — bottom padding on mobile to clear tab bar */}
-        <main className="flex-1 overflow-y-auto pb-[58px] lg:pb-0">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[58px] lg:pb-0">
           <Outlet />
         </main>
       </div>

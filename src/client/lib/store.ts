@@ -25,7 +25,17 @@ interface UIStore {
 
   // Add/edit transaction modal
   addTxOpen: boolean
-  addTxPrefill: { symbol?: string; accountId?: string; type?: string } | null
+  addTxPrefill: {
+    symbol?: string
+    accountId?: string
+    type?: string
+    // Option prefill — when set, hides the option-fields block in the modal
+    optionType?: 'call' | 'put'
+    strike?: string
+    expiry?: string
+    qty?: string
+    hideOptionFields?: boolean
+  } | null
   editTx: Transaction | null
   openAddTx: (prefill?: UIStore['addTxPrefill']) => void
   openEditTx: (tx: Transaction) => void

@@ -49,6 +49,22 @@ app.post('/', zValidator('json', TxSchema), async (c) => {
   const body = c.req.valid('json')
   const tx = { ...body, id: `tx_${uid()}` }
   await q.insertTransaction(c.env.DB, tx)
+
+  // Auto-create companion cash transaction for option premiums
+  if ((tx.type === 'sell_option' || tx.type === 'buy_option') && tx.total !== 0) {
+    const companion = {
+      id: `otc${uid()}`,
+      tx_date: tx.tx_date,
+      account_id: tx.account_id,
+      type: (tx.type === 'sell_option' ? 'deposit' : 'withdraw') as 'deposit' | 'withdraw',
+      symbol: 'CASH' as const,
+      kind: 'cash' as const,
+      total: tx.total,
+      note: `[opt-cash:${tx.id}] Option premium · ${tx.symbol ?? ''}`,
+    }
+    await q.insertTransaction(c.env.DB, companion)
+  }
+
   return c.json(tx, 201)
 })
 
@@ -58,11 +74,24 @@ app.patch('/:id', zValidator('json', TxSchema.partial()), async (c) => {
   if (!existing) return c.json({ error: 'Not found' }, 404)
   const body = c.req.valid('json')
   await q.updateTransaction(c.env.DB, id, body)
+
+  // Sync companion cash tx if the option premium total changed
+  if (body.total !== undefined && (existing.type === 'sell_option' || existing.type === 'buy_option')) {
+    await c.env.DB.prepare(
+      `UPDATE transactions SET total = ? WHERE note LIKE '[opt-cash:' || ? || ']%'`
+    ).bind(body.total, id).run()
+  }
+
   return c.json({ ...existing, ...body })
 })
 
 app.delete('/:id', async (c) => {
-  await q.deleteTransaction(c.env.DB, c.req.param('id'))
+  const id = c.req.param('id')
+  await q.deleteTransaction(c.env.DB, id)
+  // Cascade delete companion cash transaction if this was an option tx
+  await c.env.DB.prepare(
+    `DELETE FROM transactions WHERE note LIKE '[opt-cash:' || ? || ']%'`
+  ).bind(id).run()
   return c.json({ ok: true })
 })
 
