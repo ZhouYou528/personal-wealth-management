@@ -5,7 +5,7 @@ import { recurring as recurringApi, accounts as accountsApi, nav as navApi, fx a
 import { Button } from '@/components/ui/button'
 import { useMoney } from '@/lib/money'
 import { fmtDate, todayISO, cn } from '@/lib/utils'
-import type { RecurringFrequency, RecurringRule, TxType } from '@shared/types'
+import type { RecurringFrequency, RecurringRule, TxType, AssetKind } from '@shared/types'
 
 const FREQUENCIES: { value: RecurringFrequency; label: string; days: string }[] = [
   { value: 'biweekly',  label: 'Bi-weekly',  days: 'every 14 days' },
@@ -13,12 +13,20 @@ const FREQUENCIES: { value: RecurringFrequency; label: string; days: string }[] 
   { value: 'quarterly', label: 'Quarterly',  days: 'same day each 3 months' },
 ]
 
-// The subset of TxTypes that make sense as recurring. Add more later as needed.
 const TX_TYPE_OPTIONS: { value: TxType; label: string }[] = [
+  { value: 'buy',      label: 'Buy' },
+  { value: 'sell',     label: 'Sell' },
   { value: 'deposit',  label: 'Deposit' },
   { value: 'withdraw', label: 'Withdraw' },
   { value: 'interest', label: 'Interest' },
   { value: 'dividend', label: 'Dividend' },
+]
+
+const ASSET_KIND_OPTIONS: { value: AssetKind; label: string }[] = [
+  { value: 'stock',       label: 'Stock' },
+  { value: 'etf',         label: 'ETF' },
+  { value: 'mutual_fund', label: 'Mutual Fund' },
+  { value: 'crypto',      label: 'Crypto' },
 ]
 
 export function Recurring() {
@@ -107,7 +115,10 @@ export function Recurring() {
               <div key={rule.id} className="bg-surface border border-border rounded-md p-4 flex items-start gap-4 flex-wrap sm:flex-nowrap">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-small font-semibold text-text capitalize">{rule.tx_type}</span>
+                    <span className="text-small font-semibold text-text capitalize">{rule.tx_type.replace('_', ' ')}</span>
+                    {rule.symbol && (
+                      <span className="font-mono text-small font-bold text-accent">{rule.symbol}</span>
+                    )}
                     <span className="tabular text-small font-semibold text-text private-val">{fmt(rule.total)}</span>
                     <span className="text-[11px] text-text-3">
                       · {FREQUENCIES.find(f => f.value === rule.frequency)?.label}
@@ -194,6 +205,10 @@ function AddRuleModal({ onClose, accs, onCreated, editing }: {
   const qc = useQueryClient()
   const [accountId, setAccountId] = useState(editing?.account_id ?? accs[0]?.id ?? '')
   const [txType, setTxType] = useState<TxType>((editing?.tx_type as TxType) ?? 'deposit')
+  const [symbol, setSymbol] = useState(editing?.symbol ?? '')
+  const [kind, setKind] = useState<AssetKind | ''>(editing?.kind ?? '')
+  const [qty, setQty] = useState(editing?.qty != null ? String(editing.qty) : '')
+  const [price, setPrice] = useState(editing?.price != null ? String(editing.price) : '')
   // In edit mode the modal displays the stored USD amount; we don't try to recover
   // the original currency since we only kept the converted USD value.
   const [total, setTotal] = useState(editing ? String(editing.total) : '')
@@ -203,6 +218,8 @@ function AddRuleModal({ onClose, accs, onCreated, editing }: {
   const [endDate, setEndDate] = useState(editing?.end_date ?? '')
   const [note, setNote] = useState(editing?.note ?? '')
   const [submitting, setSubmitting] = useState(false)
+
+  const showAssetFields = txType === 'buy' || txType === 'sell'
 
   async function handleSubmit() {
     setSubmitting(true)
@@ -222,10 +239,18 @@ function AddRuleModal({ onClose, accs, onCreated, editing }: {
         }
       }
 
+      const assetPayload = showAssetFields ? {
+        symbol:  symbol.trim() || undefined,
+        kind:    (kind || undefined) as AssetKind | undefined,
+        qty:     qty ? Number(qty) : undefined,
+        price:   price ? Number(price) : undefined,
+      } : {}
+
       if (isEdit && editing) {
         await recurringApi.update(editing.id, {
           account_id: accountId,
           tx_type:    txType,
+          ...assetPayload,
           total:      usdTotal,
           frequency,
           start_date: startDate,
@@ -236,6 +261,7 @@ function AddRuleModal({ onClose, accs, onCreated, editing }: {
         await recurringApi.create({
           account_id: accountId,
           tx_type:    txType,
+          ...assetPayload,
           total:      usdTotal,
           frequency,
           start_date: startDate,
@@ -271,6 +297,41 @@ function AddRuleModal({ onClose, accs, onCreated, editing }: {
             {TX_TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </Field>
+
+        {showAssetFields && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Symbol">
+              <input
+                value={symbol}
+                onChange={e => setSymbol(e.target.value.toUpperCase())}
+                placeholder="e.g. BLK2060"
+                className="field-input w-full font-mono"
+              />
+            </Field>
+            <Field label="Asset type">
+              <select value={kind} onChange={e => setKind(e.target.value as AssetKind)} className="field-input w-full">
+                <option value="">— Select —</option>
+                {ASSET_KIND_OPTIONS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
+
+        {showAssetFields && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Units per firing (optional)">
+              <input type="number" step="any" value={qty} onChange={e => setQty(e.target.value)} placeholder="leave blank if N/A" className="field-input w-full" />
+            </Field>
+            <Field label="Price per unit (optional)">
+              <input type="number" step="any" value={price} onChange={e => setPrice(e.target.value)} placeholder="leave blank if N/A" className="field-input w-full" />
+            </Field>
+          </div>
+        )}
+        {showAssetFields && !qty && (
+          <p className="text-[11px] text-text-3 -mt-2">
+            Units and price are optional. Without them the transaction records cash flow only and won't affect unit-level holdings.
+          </p>
+        )}
 
         <div className="grid grid-cols-3 gap-3">
           <Field label="Amount">

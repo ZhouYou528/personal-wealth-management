@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft } from 'lucide-react'
-import { holdings as holdingsApi, transactions as txApi, nav as navApi } from '@/lib/api'
+import { holdings as holdingsApi, transactions as txApi, nav as navApi, fx as fxApi } from '@/lib/api'
 import { Glyph } from '@/components/Glyph'
 import { KindBadge } from '@/components/ui/badge'
 import { ChangePill } from '@/components/ChangePill'
@@ -220,10 +220,10 @@ export function HoldingDetail() {
               </>
             ) : (
               <>
-                <Button variant="outline" size="sm" onClick={() => openAddTx({ symbol: holding.symbol, type: 'sell' })}>
+                <Button variant="outline" size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'sell' })}>
                   Sell
                 </Button>
-                <Button size="sm" onClick={() => openAddTx({ symbol: holding.symbol, type: 'buy' })}>
+                <Button size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'buy' })}>
                   Buy more
                 </Button>
               </>
@@ -243,11 +243,12 @@ export function HoldingDetail() {
           )}
         </div>
 
-        {isOption && (
+        {(isOption || holding.kind === 'mutual_fund') && (
           <MarkEditor
             holdingId={holding.id}
             currentPx={holding.px}
             marked={!!holding.marked}
+            isTotalValue={holding.kind === 'mutual_fund' && holding.qty === 1}
             onSave={(p) => setMarkMut.mutate(p)}
             onClear={() => clearMarkMut.mutate()}
             pending={setMarkMut.isPending || clearMarkMut.isPending}
@@ -366,40 +367,55 @@ export function HoldingDetail() {
 }
 
 function MarkEditor({
-  holdingId, currentPx, marked, onSave, onClear, pending,
+  holdingId, currentPx, marked, isTotalValue = false, onSave, onClear, pending,
 }: {
   holdingId: string
   currentPx: number
   marked: boolean
+  isTotalValue?: boolean   // true for mutual funds where qty=1, so price = total account value
   onSave: (p: number) => void
   onClear: () => void
   pending: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(currentPx))
+  const [currency, setCurrency] = useState<'USD' | 'CAD'>('USD')
+  const [converting, setConverting] = useState(false)
 
-  // Reset draft only when the holding ID changes (e.g. navigated to a different position).
-  // Intentionally NOT depending on currentPx — otherwise a holdings refetch while the user
-  // is mid-typing would overwrite their input.
   useEffect(() => { setDraft(String(currentPx)) }, [holdingId])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleSave() {
+    let usd = Number(draft)
+    if (isNaN(usd) || usd < 0) return
+    if (currency === 'CAD') {
+      setConverting(true)
+      try {
+        const fx = await fxApi.rates('USD')
+        const rate = fx.rates['CAD']
+        if (rate && rate > 0) usd = usd / rate
+      } catch {
+        // fall back to as-entered
+      } finally {
+        setConverting(false)
+      }
+    }
+    onSave(usd)
+    setEditing(false)
+  }
 
   if (!editing) {
     return (
       <div className="mt-3 flex items-center gap-2">
-        <button
-          onClick={() => setEditing(true)}
-          className="text-[12px] text-accent hover:underline"
-        >
-          {marked ? 'Update mark' : 'Set current price'}
+        <button onClick={() => setEditing(true)} className="text-[12px] text-accent hover:underline">
+          {marked ? `Update ${isTotalValue ? 'value' : 'mark'}` : `Set ${isTotalValue ? 'current value' : 'current price'}`}
         </button>
         {marked && (
-          <button
-            onClick={onClear}
-            disabled={pending}
-            className="text-[12px] text-text-3 hover:text-down"
-          >
+          <button onClick={onClear} disabled={pending} className="text-[12px] text-text-3 hover:text-down">
             · Clear
           </button>
+        )}
+        {isTotalValue && (
+          <span className="text-[11px] text-text-3">— enter total balance from your statement</span>
         )}
       </div>
     )
@@ -407,9 +423,24 @@ function MarkEditor({
 
   return (
     <div className="mt-3 flex items-center gap-2 flex-wrap">
-      <label className="text-[11px] text-text-3">Current price (per share)</label>
+      <label className="text-[11px] text-text-3">
+        {isTotalValue ? 'Total account value' : 'Current price (per share)'}
+      </label>
+      {isTotalValue && (
+        <div className="flex text-[11px] gap-0.5 bg-surface-2 rounded p-0.5">
+          {(['USD', 'CAD'] as const).map(c => (
+            <button
+              key={c}
+              onClick={() => setCurrency(c)}
+              className={`px-2 py-0.5 rounded font-medium transition-colors ${currency === c ? 'bg-surface text-text shadow-sm' : 'text-text-3 hover:text-text'}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-1">
-        <span className="text-text-3 text-small">$</span>
+        <span className="text-text-3 text-small">{currency === 'CAD' ? 'CA$' : '$'}</span>
         <input
           type="number"
           step="any"
@@ -417,24 +448,20 @@ function MarkEditor({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const p = Number(draft)
-              if (!isNaN(p) && p >= 0) { onSave(p); setEditing(false) }
-            }
+            if (e.key === 'Enter') handleSave()
             if (e.key === 'Escape') setEditing(false)
           }}
-          className="field-input w-28 tabular"
+          className="field-input w-32 tabular"
         />
       </div>
-      <Button
-        size="sm"
-        disabled={pending || !draft || isNaN(Number(draft))}
-        onClick={() => { onSave(Number(draft)); setEditing(false) }}
-      >
-        Save
+      {currency === 'CAD' && (
+        <span className="text-[11px] text-text-3">→ converted to USD at live rate</span>
+      )}
+      <Button size="sm" disabled={pending || converting || !draft || isNaN(Number(draft))} onClick={handleSave}>
+        {converting ? 'Converting…' : 'Save'}
       </Button>
       <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-      <span className="text-[11px] text-text-3">× 100 shares per contract</span>
+      {!isTotalValue && <span className="text-[11px] text-text-3">× 100 shares per contract</span>}
     </div>
   )
 }
