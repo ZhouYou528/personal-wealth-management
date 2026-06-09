@@ -7,4 +7,5 @@ export interface Env {
   SNAPTRADE_CLIENT_ID: string
   SNAPTRADE_CONSUMER_KEY: string
   ENVIRONMENT?: string
+  APP_SECRET?: string
 }

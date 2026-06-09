@@ -2,14 +2,26 @@ import type {
   Account, Transaction, Holding, WatchlistItem, Goal,
   CalendarEvent, NavSnapshot, Quote, TickerSearchResult,
 } from '@shared/types'
+import { useStore } from './store'
 
 const BASE = '/api'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { apiSecret, setApiSecret } = useStore.getState()
+  const authHeaders: Record<string, string> = apiSecret
+    ? { Authorization: `Bearer ${apiSecret}` }
+    : {}
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { 'Content-Type': 'application/json', ...authHeaders, ...init?.headers },
     ...init,
   })
+
+  if (res.status === 401) {
+    setApiSecret(null)
+    throw new Error('Access key expired or invalid. Please re-enter your access key.')
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText })) as { error: unknown; message?: string }
     let msg: string
@@ -35,6 +47,7 @@ export const accounts = {
   create: (body: Omit<Account, 'id' | 'created_at'>)   => request<Account>('/accounts', { method: 'POST', body: JSON.stringify(body) }),
   update: (id: string, body: Partial<Account>)          => request<Account>(`/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: (id: string)                                  => request<{ ok: boolean }>(`/accounts/${id}`, { method: 'DELETE' }),
+  reorder: (ids: string[])                              => request<{ ok: boolean }>('/accounts/reorder', { method: 'POST', body: JSON.stringify({ ids }) }),
 }
 
 // ── Transactions ─────────────────────────────────────────────
@@ -261,6 +274,12 @@ export const snaptrade = {
       method: 'POST',
       body: JSON.stringify({ accountId, activityIds, startDate, endDate }),
     }),
+}
+
+// ── Admin ────────────────────────────────────────────────────
+
+export const admin = {
+  runSnapshot: () => request<{ ok: boolean }>('/admin/run-snapshot', { method: 'POST' }),
 }
 
 // ── NAV ──────────────────────────────────────────────────────

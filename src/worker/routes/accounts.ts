@@ -44,6 +44,12 @@ app.patch('/:id', zValidator('json', AccountSchema.partial()), async (c) => {
   return c.json({ ...existing, ...body })
 })
 
+app.post('/reorder', zValidator('json', z.object({ ids: z.array(z.string()) })), async (c) => {
+  const { ids } = c.req.valid('json')
+  await q.reorderAccounts(c.env.DB, ids)
+  return c.json({ ok: true })
+})
+
 app.delete('/:id', async (c) => {
   const id = c.req.param('id')
   const db = c.env.DB

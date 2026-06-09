@@ -3,7 +3,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { Glyph } from '@/components/Glyph'
-import { holdings as holdingsApi, nav, accounts as accountsApi } from '@/lib/api'
+import { holdings as holdingsApi, nav, accounts as accountsApi, admin } from '@/lib/api'
+import { STALE } from '@/lib/cache'
 import { useStore } from '@/lib/store'
 import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral } from '@/lib/utils'
 import { useMoney } from '@/lib/money'
@@ -418,17 +419,19 @@ export function Dashboard() {
   const { data: navData = [] } = useQuery({
     queryKey: ['nav', selectedAccountId, 'full'],
     queryFn: () => nav.history(1825, selectedAccountId ?? undefined),
+    staleTime: STALE.history,
   })
 
   const { data: accountsList = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
+    staleTime: STALE.static,
   })
 
   // If there are holdings but no nav history, trigger a snapshot so the chart populates
   useEffect(() => {
     if (holdingsData.length > 0 && navData.length === 0) {
-      fetch('/api/admin/run-snapshot', { method: 'POST' })
+      admin.runSnapshot()
         .then(() => qc.invalidateQueries({ queryKey: ['nav'] }))
         .catch(() => {})
     }

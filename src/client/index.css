@@ -70,11 +70,19 @@
 
   html {
     font-feature-settings: "kern" 1;
+    height: 100%;
+    overflow: hidden;
   }
 
   body {
     @apply bg-bg text-text font-sans antialiased;
     font-size: 13.5px;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
   }
 }
 

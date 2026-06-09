@@ -8,7 +8,9 @@ import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
 import { Button } from './ui/button'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { holdings as holdingsApi, accounts as accountsApi, nav } from '@/lib/api'
+import { STALE } from '@/lib/cache'
 
 const PRIMARY_NAV = [
   { to: '/',             label: 'Dashboard',    icon: LayoutDashboard },
@@ -107,38 +109,40 @@ function BottomTabBar({ onMoreOpen }: { onMoreOpen: () => void }) {
   const moreActive = MORE_ITEMS.some(i => location.pathname === i.to)
 
   return (
-    <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/90 backdrop-blur-md border-t border-border flex items-stretch h-[58px]">
-      {BOTTOM_TABS.map(({ to, label, icon: Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={to === '/'}
-          className={({ isActive }) =>
-            cn(
-              'flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors duration-150',
-              isActive ? 'text-accent' : 'text-text-3'
-            )
-          }
-        >
-          {({ isActive }) => (
-            <>
-              <Icon size={20} strokeWidth={isActive ? 2 : 1.75} />
-              <span>{label}</span>
-            </>
+    <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/90 backdrop-blur-md border-t border-border pb-safe">
+      <div className="flex items-stretch h-[58px]">
+        {BOTTOM_TABS.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) =>
+              cn(
+                'flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors duration-150',
+                isActive ? 'text-accent' : 'text-text-3'
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon size={20} strokeWidth={isActive ? 2 : 1.75} />
+                <span>{label}</span>
+              </>
+            )}
+          </NavLink>
+        ))}
+        {/* More tab */}
+        <button
+          onClick={onMoreOpen}
+          className={cn(
+            'flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors duration-150',
+            moreActive ? 'text-accent' : 'text-text-3'
           )}
-        </NavLink>
-      ))}
-      {/* More tab */}
-      <button
-        onClick={onMoreOpen}
-        className={cn(
-          'flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors duration-150',
-          moreActive ? 'text-accent' : 'text-text-3'
-        )}
-      >
-        <MoreHorizontal size={20} strokeWidth={moreActive ? 2 : 1.75} />
-        <span>More</span>
-      </button>
+        >
+          <MoreHorizontal size={20} strokeWidth={moreActive ? 2 : 1.75} />
+          <span>More</span>
+        </button>
+      </div>
     </nav>
   )
 }
@@ -193,8 +197,17 @@ export function Layout() {
   const isFetching = useIsFetching()
   const [moreOpen, setMoreOpen] = useState(false)
 
+  // Prefetch the three most expensive queries as soon as the layout shell mounts.
+  // This runs in parallel with the page render so Dashboard data is often ready
+  // by the time React Query fires its own useQuery calls.
+  useEffect(() => {
+    qc.prefetchQuery({ queryKey: ['holdings', null],        queryFn: () => holdingsApi.list(),         staleTime: STALE.prices  })
+    qc.prefetchQuery({ queryKey: ['accounts'],              queryFn: accountsApi.list,                 staleTime: STALE.static  })
+    qc.prefetchQuery({ queryKey: ['nav', null, 'full'],     queryFn: () => nav.history(1825),          staleTime: STALE.history })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <div className={cn('flex h-screen overflow-hidden', privacyMode && 'private')}>
+    <div className={cn('flex h-full overflow-hidden', privacyMode && 'private')}>
       {/* Desktop sidebar */}
       <div className="hidden lg:flex flex-shrink-0">
         <Sidebar />
@@ -260,8 +273,8 @@ export function Layout() {
           </div>
         </header>
 
-        {/* Page content — bottom padding on mobile to clear tab bar */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[58px] lg:pb-0">
+        {/* Page content — bottom padding clears tab bar + iPhone home indicator */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden pb-tab-bar lg:pb-0">
           <Outlet />
         </main>
       </div>

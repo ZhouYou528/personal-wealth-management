@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Check, Pencil, Plus, Trash2, X, Wifi,
@@ -13,6 +13,15 @@ import {
 } from '@/lib/api'
 import type { SnapBrokerage, SnapBrokerAccount, ImportAccountItem, SyncActivity, SyncD1Only } from '@/lib/api'
 import { useStore } from '@/lib/store'
+import {
+  DndContext, closestCenter, PointerSensor, TouchSensor,
+  useSensor, useSensors, type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext, rectSortingStrategy,
+  useSortable, arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { AccountTypeBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useMoney } from '@/lib/money'
@@ -749,6 +758,78 @@ function SyncModal({
   )
 }
 
+// ── Delete confirmation dialog ───────────────────────────────
+
+function DeleteConfirmDialog({
+  account,
+  onConfirm,
+  onCancel,
+  pending,
+}: {
+  account: Account
+  onConfirm: () => void
+  onCancel: () => void
+  pending: boolean
+}) {
+  return (
+    <Dialog.Root open onOpenChange={o => !o && onCancel()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100vw-2rem)] max-w-sm">
+          <div className="bg-surface rounded-xl shadow-xl border border-border p-6">
+            <Dialog.Title className="text-section-h2 text-text mb-1">Delete account?</Dialog.Title>
+            <Dialog.Description className="text-small text-text-3 mb-5">
+              <strong className="text-text">{account.name}</strong> and all its transactions, holdings, and nav history will be permanently removed.
+            </Dialog.Description>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={onCancel} disabled={pending}>Cancel</Button>
+              <Button
+                className="bg-down hover:bg-down/90 text-white border-0"
+                onClick={onConfirm}
+                disabled={pending}
+              >
+                {pending ? 'Deleting…' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+// ── Sortable card wrapper ─────────────────────────────────────
+
+function SortableCard({ id, children }: { id: string; children: (dragHandle: React.ReactNode) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  }
+  const handle = (
+    <button
+      {...attributes}
+      {...listeners}
+      className="p-1 rounded text-text-3 hover:text-text-2 cursor-grab active:cursor-grabbing touch-none"
+      title="Drag to reorder"
+      tabIndex={-1}
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+        <circle cx="4" cy="2.5" r="1.1"/><circle cx="8" cy="2.5" r="1.1"/>
+        <circle cx="4" cy="6" r="1.1"/><circle cx="8" cy="6" r="1.1"/>
+        <circle cx="4" cy="9.5" r="1.1"/><circle cx="8" cy="9.5" r="1.1"/>
+      </svg>
+    </button>
+  )
+  return (
+    <div ref={setNodeRef} style={style}>
+      {children(handle)}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────
 
 export function Accounts() {
@@ -761,11 +842,43 @@ export function Accounts() {
   const [draftName, setDraftName] = useState('')
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null)
   const [editingColorId, setEditingColorId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null)
+  const [orderedIds, setOrderedIds] = useState<string[]>([])
 
   const { data: accs = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
   })
+
+  // Keep local order in sync when server data arrives (only on first load / external change)
+  useEffect(() => {
+    if (accs.length > 0) setOrderedIds(accs.map(a => a.id))
+  }, [accs.map(a => a.id).join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const orderedAccs = useMemo(() => {
+    if (orderedIds.length === 0) return accs
+    const map = Object.fromEntries(accs.map(a => [a.id, a]))
+    return orderedIds.map(id => map[id]).filter(Boolean)
+  }, [accs, orderedIds])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 200, tolerance: 8 } }),
+  )
+
+  const reorderMut = useMutation({ mutationFn: accountsApi.reorder })
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setOrderedIds(prev => {
+      const oldIdx = prev.indexOf(active.id as string)
+      const newIdx = prev.indexOf(over.id as string)
+      const next = arrayMove(prev, oldIdx, newIdx)
+      reorderMut.mutate(next)
+      return next
+    })
+  }, [reorderMut])
 
   const { data: allHoldings = [] } = useQuery({
     queryKey: ['holdings', null],
@@ -838,17 +951,20 @@ export function Accounts() {
         </Button>
       </div>
 
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={orderedIds} strategy={rectSortingStrategy}>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {accs.map(acc => {
+        {orderedAccs.map(acc => {
           const isLive = !!acc.snaptrade_account_id
           return (
+            <SortableCard key={acc.id} id={acc.id}>{(dragHandle) => (
             <div
-              key={acc.id}
               className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
               onClick={() => { if (editingColorId === acc.id) setEditingColorId(null) }}
             >
               {editingId !== acc.id && (
-                <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-3 right-3 flex gap-1 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                  {dragHandle}
                   {isLive && (
                     <button
                       onClick={e => { e.stopPropagation(); setSyncAccount(acc) }}
@@ -866,12 +982,7 @@ export function Accounts() {
                     <Pencil size={13} />
                   </button>
                   <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      if (confirm(`Delete "${acc.name}"? This won't delete its transactions.`)) {
-                        deleteMutation.mutate(acc.id)
-                      }
-                    }}
+                    onClick={e => { e.stopPropagation(); setDeleteTarget(acc) }}
                     className="p-1 rounded hover:text-down text-text-3"
                     title="Delete"
                   >
@@ -1002,6 +1113,7 @@ export function Accounts() {
                 </div>
               )}
             </div>
+          )}</SortableCard>
           )
         })}
 
@@ -1011,6 +1123,8 @@ export function Accounts() {
           </div>
         )}
       </div>
+        </SortableContext>
+      </DndContext>
 
       {selectedAccountId && (
         <p className="text-small text-text-3 mt-4">
@@ -1022,6 +1136,18 @@ export function Accounts() {
       <AddAccountModal open={addOpen} onClose={() => setAddOpen(false)} existingAccounts={accs} />
       {syncAccount && (
         <SyncModal account={syncAccount} open={true} onClose={() => setSyncAccount(null)} />
+      )}
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          account={deleteTarget}
+          pending={deleteMutation.isPending}
+          onConfirm={() => {
+            deleteMutation.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            })
+          }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   )

@@ -6,8 +6,12 @@ import type {
 // ---------- Accounts ----------
 
 export async function getAccounts(db: D1Database): Promise<Account[]> {
-  const { results } = await db.prepare('SELECT * FROM accounts ORDER BY created_at ASC').all<Account>()
+  const { results } = await db.prepare('SELECT * FROM accounts ORDER BY sort_order ASC, created_at ASC').all<Account>()
   return results
+}
+
+export async function reorderAccounts(db: D1Database, ids: string[]): Promise<void> {
+  await db.batch(ids.map((id, i) => db.prepare('UPDATE accounts SET sort_order = ? WHERE id = ?').bind(i, id)))
 }
 
 export async function getAccount(db: D1Database, id: string): Promise<Account | null> {
@@ -15,10 +19,12 @@ export async function getAccount(db: D1Database, id: string): Promise<Account | 
 }
 
 export async function insertAccount(db: D1Database, a: Omit<Account, 'created_at'>): Promise<void> {
+  const row = await db.prepare('SELECT MAX(sort_order) as m FROM accounts').first<{ m: number | null }>()
+  const nextOrder = (row?.m ?? -1) + 1
   await db.prepare(`
-    INSERT INTO accounts (id, name, type, institution, color, number)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).bind(a.id, a.name, a.type, a.institution, a.color, a.number).run()
+    INSERT INTO accounts (id, name, type, institution, color, number, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(a.id, a.name, a.type, a.institution, a.color, a.number, nextOrder).run()
 }
 
 export async function updateAccount(db: D1Database, id: string, a: Partial<Omit<Account, 'id' | 'created_at'>>): Promise<void> {

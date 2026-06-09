@@ -1,269 +1,215 @@
-#!/usr/bin/env node
-/**
- * One-time NAV backfill for SnapTrade-linked accounts.
- *
- * Usage:
- *   FINNHUB_KEY=xxx COINGECKO_KEY=yyy node scripts/backfill-nav.mjs [--days 365]
- */
-
-import { execFileSync } from 'child_process'
 import { createHmac } from 'crypto'
-import { writeFileSync, unlinkSync } from 'fs'
-import { argv } from 'process'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { writeFileSync } from 'fs'
+import { execSync } from 'child_process'
 
-// ── Config ────────────────────────────────────────────────────
-
-const FINNHUB_KEY   = process.env.FINNHUB_KEY    || ''
-const COINGECKO_KEY = process.env.COINGECKO_KEY  || ''
 const CLIENT_ID     = 'PERS-X6S5QBU4D2D93R977042'
 const CONSUMER_KEY  = 'Wh4BkUAgTxUylFZMVg98o1Y6HgcQwnbhAoE7VWTied0b3NGjNP'
-const SNAP_BASE     = 'https://api.snaptrade.com/api/v1'
-const DB            = 'pwm_db'
+const USER_ID       = 'pwm536df1e7fdeb42d88e3a'
+const USER_SECRET   = 'bf75d08a-8550-4b25-bee5-e58419d531b9'
+const PWD           = '/Users/yzhou/personal-wealth-management'
 
-const daysArg = argv.indexOf('--days')
-const DAYS    = daysArg !== -1 ? parseInt(argv[daysArg + 1], 10) : 365
+// SnapTrade-linked accounts
+const ACCOUNTS = [
+  { d1Id: 'acc_74cfe730', snapId: 'a144a70d-ded7-4564-b342-d8a35c3233bc', name: 'Fidelity 401k' },
+  { d1Id: 'acc_2f5c5857', snapId: 'aefa624b-d6c0-46f1-968d-349cb27c1cfb', name: 'IBKR TFSA' },
+  { d1Id: 'acc_25e3c6bb', snapId: 'e390f227-6a43-4ba2-87f2-8b3e720e6535', name: 'Robinhood Crypto' },
+  { d1Id: 'acc_5b5652ba', snapId: '30280a68-5256-4665-82f2-46c55ad078fe', name: 'Robinhood Individual' },
+]
 
-if (!FINNHUB_KEY)   { console.error('Missing FINNHUB_KEY'); process.exit(1) }
-if (!COINGECKO_KEY) { console.error('Missing COINGECKO_KEY'); process.exit(1) }
+// Non-SnapTrade accounts that use a performance-proxy from Yahoo Finance.
+// currentValue: total cash invested / cost basis (our best known value).
+// proxyTicker: Yahoo Finance ticker whose daily returns are used to estimate history.
+const PROXY_ACCOUNTS = [
+  {
+    d1Id: 'acc_b9c8f7d0',
+    name: 'Canada Life',
+    currentValue: 66547.49,        // $65,791.61 transfer-in + $755.88 contribution
+    proxyTicker: 'LIZKX',          // BlackRock LifePath Index 2060 Fund Class K — direct match for Canada Life's BLKLP2060
+  },
+]
 
-// ── CoinGecko map ─────────────────────────────────────────────
-
-const COINGECKO_ID = {
-  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
-  XRP: 'ripple', ADA: 'cardano', AVAX: 'avalanche-2', DOGE: 'dogecoin',
-  DOT: 'polkadot', MATIC: 'matic-network', LINK: 'chainlink',
-  UNI: 'uniswap', ATOM: 'cosmos', USDC: 'usd-coin', USDT: 'tether',
-  LTC: 'litecoin', BCH: 'bitcoin-cash', SHIB: 'shiba-inu', TON: 'the-open-network',
-}
-const CRYPTO = new Set(Object.keys(COINGECKO_ID))
-const isCrypto = sym => CRYPTO.has(sym.toUpperCase())
-
-// ── SnapTrade auth (mirrors worker/lib/snaptrade.ts) ──────────
-
-function sortedJSON(val) {
-  if (val === null || typeof val !== 'object' || Array.isArray(val)) return JSON.stringify(val)
-  const sorted = {}
-  for (const k of Object.keys(val).sort()) sorted[k] = val[k]
-  return JSON.stringify(sorted)
-}
-
-async function snapFetch(path, userId, userSecret, { method = 'GET', body = null } = {}) {
-  const timestamp = Math.floor(Date.now() / 1000)
-  const qs = new URLSearchParams({
-    clientId: CLIENT_ID,
-    timestamp: String(timestamp),
-    userId,
-    userSecret,
-  })
-
-  const sigObj = {
-    content: body,
-    path: `/api/v1${path}`,
-    query: qs.toString(),
-  }
-  const sigMessage = sortedJSON(sigObj)
-  const signature = createHmac('sha256', CONSUMER_KEY)
-    .update(sigMessage)
-    .digest('base64')
-
-  const res = await fetch(`${SNAP_BASE}${path}?${qs}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Signature': signature },
-    body: body != null ? JSON.stringify(body) : undefined,
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`SnapTrade ${path} → ${res.status}: ${err}`)
-  }
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
+// Mutual/segregated funds with a known Yahoo Finance proxy ticker
+// Key: uppercase description from SnapTrade; value: Yahoo Finance symbol
+const FUND_OVERRIDES = {
+  'VANGUARD TARGET 2060': 'VTIVX',
 }
 
-// ── D1 helpers ────────────────────────────────────────────────
-
-// SELECT: use --command with args array (no shell escaping issues)
-function d1Select(sql) {
-  const oneLine = sql.replace(/\s+/g, ' ').trim()
-  const raw = execFileSync(
-    'npx', ['wrangler', 'd1', 'execute', DB, '--remote', '--json', '--command', oneLine],
-    { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-  )
-  const jsonStart = raw.indexOf('[')
-  const jsonEnd   = raw.lastIndexOf(']') + 1
-  if (jsonStart === -1) return []
-  return JSON.parse(raw.slice(jsonStart, jsonEnd))[0]?.results ?? []
-}
-
-// Write: use --file (no result rows needed, avoids shell escaping of large SQL)
-function d1Write(sql) {
-  const tmp = join(tmpdir(), `pwm_d1_${Date.now()}.sql`)
-  try {
-    writeFileSync(tmp, sql, 'utf8')
-    execFileSync(
-      'npx', ['wrangler', 'd1', 'execute', DB, '--remote', '--file', tmp],
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    )
-  } finally {
-    try { unlinkSync(tmp) } catch {}
-  }
-}
-
-async function d1InsertNavRows(rows) {
-  const CHUNK = 50
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK)
-    const values = chunk.map(r =>
-      `('${r.snap_date}', 23, '${r.account_id}', ${r.value}, 'market')`
-    ).join(',\n')
-    d1Write(`
-      INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
-      VALUES ${values}
-      ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source;
-    `)
-    process.stdout.write('.')
-  }
-}
-
-// ── Price fetchers ────────────────────────────────────────────
-
+const DAYS   = 1825  // 5 years
 const nowTs  = Math.floor(Date.now() / 1000)
 const fromTs = nowTs - DAYS * 86400
 
-async function yahooCandles(sym) {
-  // Yahoo Finance: handles US stocks, ETFs, and Canadian .TO symbols
+// ── SnapTrade signed fetch ────────────────────────────────────
+async function snapFetch(path) {
+  const ts  = Math.floor(Date.now() / 1000)
+  const qs  = `clientId=${CLIENT_ID}&timestamp=${ts}&userId=${USER_ID}&userSecret=${USER_SECRET}`
+  const msg = JSON.stringify({ content: null, path: `/api/v1${path}`, query: qs })
+  const sig = createHmac('sha256', CONSUMER_KEY).update(msg).digest('base64')
+  const res = await fetch(`https://api.snaptrade.com/api/v1${path}?${qs}`, { headers: { Signature: sig } })
+  if (!res.ok) throw new Error(`SnapTrade ${res.status}: ${await res.text()}`)
+  return res.json()
+}
+
+// ── Yahoo Finance daily adjusted closes → { "YYYY-MM-DD": price } ───
+const YH_HEADERS = { 'User-Agent': 'Mozilla/5.0' }
+async function yahooCandles(sym, kind) {
+  const ySym = kind === 'crypto' ? sym.toUpperCase() + '-USD'
+             : sym.endsWith('.TO') ? sym
+             : sym.replace(/\./g, '-')
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?period1=${fromTs}&period2=${nowTs}&interval=1d`
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1d&period1=${fromTs}&period2=${nowTs}`
+    const res = await fetch(url, { headers: YH_HEADERS })
     if (!res.ok) return {}
     const d = await res.json()
-    const timestamps = d?.chart?.result?.[0]?.timestamp
-    const closes     = d?.chart?.result?.[0]?.indicators?.quote?.[0]?.close
-    if (!timestamps || !closes) return {}
+    const result = d.chart?.result?.[0]
+    if (!result) return {}
+    const ts     = result.timestamp ?? []
+    const closes = result.indicators?.adjclose?.[0]?.adjclose
+                ?? result.indicators?.quote?.[0]?.close ?? []
     const out = {}
-    for (let i = 0; i < timestamps.length; i++) {
+    for (let i = 0; i < ts.length; i++) {
       if (closes[i] == null) continue
-      out[new Date(timestamps[i] * 1000).toISOString().slice(0, 10)] = closes[i]
+      out[new Date(ts[i] * 1000).toISOString().slice(0, 10)] = closes[i]
     }
     return out
   } catch { return {} }
 }
 
-async function finnhubCandles(sym) {
-  try {
-    const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${fromTs}&to=${nowTs}&token=${FINNHUB_KEY}`
-    const res = await fetch(url)
-    if (!res.ok) return {}
-    const d = await res.json()
-    if (d.s !== 'ok' || !d.t || !d.c) return {}
-    const out = {}
-    for (let i = 0; i < d.t.length; i++) {
-      out[new Date(d.t[i] * 1000).toISOString().slice(0, 10)] = d.c[i]
+// ── USD/CAD rate ──────────────────────────────────────────────
+const fxData     = await (await fetch('https://api.frankfurter.app/latest?base=USD&symbols=CAD')).json()
+const usdCadRate = fxData.rates?.CAD ?? 1.37
+console.log(`FX: 1 USD = ${usdCadRate} CAD\n`)
+
+const sqlLines = []
+
+// ── SnapTrade accounts ────────────────────────────────────────
+for (const acct of ACCOUNTS) {
+  console.log(`── ${acct.name} ──`)
+
+  const [posData, balData] = await Promise.all([
+    snapFetch(`/accounts/${acct.snapId}/positions/all`),
+    snapFetch(`/accounts/${acct.snapId}/balances`),
+  ])
+
+  const positions = posData?.results ?? []
+  const balances  = Array.isArray(balData) ? balData : []
+
+  const cashUsd = balances.reduce((s, b) => {
+    const amt = b.cash ?? 0
+    return s + (b.currency?.code === 'CAD' ? amt / usdCadRate : amt)
+  }, 0)
+  console.log(`  cash $${cashUsd.toFixed(2)} USD`)
+
+  const dateValue = {}
+
+  for (const pos of positions) {
+    const kind = (pos.instrument?.kind ?? '').toLowerCase()
+    const desc = (pos.instrument?.description ?? '').toUpperCase().trim()
+    const override = FUND_OVERRIDES[desc]
+
+    if (kind === 'option') {
+      console.log(`  skip ${pos.instrument?.symbol} (option)`)
+      continue
     }
-    return out
-  } catch { return {} }
-}
-
-async function coinGeckoCandles(sym) {
-  const id = COINGECKO_ID[sym.toUpperCase()]
-  if (!id) return {}
-  try {
-    const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${DAYS}`
-    const res = await fetch(url, { headers: { 'x-cg-demo-api-key': COINGECKO_KEY } })
-    if (!res.ok) return {}
-    const d = await res.json()
-    const byDate = {}
-    for (const [tsMs, price] of d.prices) {
-      byDate[new Date(tsMs).toISOString().slice(0, 10)] = price
-    }
-    return byDate
-  } catch { return {} }
-}
-
-// ── Main ──────────────────────────────────────────────────────
-
-async function main() {
-  console.log(`Backfilling ${DAYS} days of NAV for SnapTrade-linked accounts...\n`)
-
-  const accounts = d1Select('SELECT id, snaptrade_account_id FROM accounts WHERE snaptrade_account_id IS NOT NULL')
-  console.log(`Found ${accounts.length} linked account(s):`, accounts.map(a => a.id))
-
-  const [snapUser] = d1Select("SELECT snaptrade_user_id, user_secret FROM snaptrade_users WHERE id = 'singleton'")
-  if (!snapUser) { console.error('No SnapTrade user'); process.exit(1) }
-  const { snaptrade_user_id: userId, user_secret: userSecret } = snapUser
-
-  for (const acc of accounts) {
-    const { id: d1Id, snaptrade_account_id: snapAccId } = acc
-    console.log(`\nProcessing ${d1Id} (snap: ${snapAccId})`)
-
-    let positions, balances
-    try {
-      const [posRes, balRes] = await Promise.all([
-        snapFetch(`/accounts/${snapAccId}/positions/all`, userId, userSecret),
-        snapFetch(`/accounts/${snapAccId}/balances`, userId, userSecret),
-      ])
-      positions = posRes?.results ?? posRes ?? []
-      balances  = balRes ?? []
-    } catch (e) {
-      console.error(`  Failed: ${e.message}`)
+    if ((kind === 'other' || kind === 'mutualfund') && !override) {
+      console.log(`  skip ${pos.instrument?.symbol} (${kind}) — no Yahoo Finance mapping`)
       continue
     }
 
-    const cashTotal = balances.reduce((s, b) => s + (b.cash ?? 0), 0)
-    console.log(`  ${positions.length} positions, cash $${cashTotal.toFixed(2)}`)
+    const qty = Number(pos.units) || 0
+    const sym = override ?? pos.instrument?.symbol
+    if (!sym || !qty) continue
 
-    const dateValue = {}
+    const isCAD = !override && (pos.currency ?? '').toUpperCase() === 'CAD'
+    const dispSym = override ? `${pos.instrument?.symbol} → ${sym}` : sym
+    process.stdout.write(`  ${dispSym} qty=${qty} ${isCAD ? 'CAD' : 'USD'} ... `)
 
-    for (const pos of positions) {
-      const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
-      if (instrKind === 'option') continue  // no historical option prices
-      const qty = Number(pos.units) || 0
-      const sym = pos.instrument?.symbol
-      if (!sym || !qty) continue
+    const candles = await yahooCandles(sym, override ? 'stock' : kind)
+    const candleDates = Object.keys(candles).sort()
+    console.log(`${candleDates.length} days`)
 
-      console.log(`  Fetching ${sym} (qty=${qty})...`)
-      let candles = isCrypto(sym) ? await coinGeckoCandles(sym) : await yahooCandles(sym)
-      // Fallback to Finnhub if Yahoo returns nothing
-      if (Object.keys(candles).length === 0 && !isCrypto(sym)) candles = await finnhubCandles(sym)
-      const n = Object.keys(candles).length
-      console.log(`    ${n} trading days`)
+    if (override && candleDates.length > 0) {
+      // Fund override: the proxy ticker has a different share-class NAV than the actual fund.
+      // Use the proxy's *performance* (% change) scaled to the actual live value from SnapTrade,
+      // so the chart anchors to the real current value rather than raw-price × qty.
+      const liveValue = qty * (Number(pos.price) || Number(pos.cost_basis) || 0)
+      const refPrice  = candles[candleDates.at(-1)]
+      process.stdout.write(`  (live $${liveValue.toFixed(2)}, proxy ref $${refPrice.toFixed(2)}) `)
       for (const [date, price] of Object.entries(candles)) {
-        dateValue[date] = (dateValue[date] ?? 0) + qty * price
+        dateValue[date] = (dateValue[date] ?? 0) + liveValue * (price / refPrice)
+      }
+    } else {
+      for (const [date, price] of Object.entries(candles)) {
+        const priceUsd = isCAD ? price / usdCadRate : price
+        dateValue[date] = (dateValue[date] ?? 0) + qty * priceUsd
       }
     }
-
-    for (const date of Object.keys(dateValue)) dateValue[date] += cashTotal
-
-    const rows = Object.entries(dateValue).map(([snap_date, value]) => ({ snap_date, account_id: d1Id, value }))
-    if (rows.length === 0) { console.log('  No price data — skipping'); continue }
-
-    console.log(`  Writing ${rows.length} rows...`)
-    d1Write(`DELETE FROM nav_snapshots WHERE account_id = '${d1Id}' AND source = 'market';`)
-    await d1InsertNavRows(rows)
-    console.log('\n  Done.')
   }
 
-  // Recompute aggregate from market-only per-account rows
-  console.log('\nRecomputing aggregate...')
-  d1Write("DELETE FROM nav_snapshots WHERE account_id = '';")
-  d1Write(`
-    INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
-    SELECT snap_date, 23, '', SUM(value), 'market'
-    FROM nav_snapshots
-    WHERE account_id != '' AND source = 'market'
-    GROUP BY snap_date
-    ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source;
-  `)
+  for (const date of Object.keys(dateValue)) dateValue[date] += cashUsd
 
-  const summary = d1Select(
-    "SELECT account_id, COUNT(*) as cnt, MIN(snap_date) as earliest, MAX(snap_date) as latest FROM nav_snapshots WHERE source = 'market' GROUP BY account_id ORDER BY account_id"
-  )
-  console.log('\n── Result ───────────────────────────────────')
-  for (const row of summary) {
-    console.log(`  ${row.account_id || '(aggregate)'}: ${row.cnt} rows  ${row.earliest} → ${row.latest}`)
+  const ndates = Object.keys(dateValue).length
+  console.log(`  → ${ndates} snapshots\n`)
+
+  for (const [date, value] of Object.entries(dateValue)) {
+    sqlLines.push(
+      `INSERT OR REPLACE INTO nav_snapshots (snap_date,snap_hour,account_id,value,source) ` +
+      `VALUES ('${date}',23,'${acct.d1Id}',${value.toFixed(4)},'market');`
+    )
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1) })
+// ── Non-SnapTrade proxy accounts ─────────────────────────────
+// For funds with no live price feed, we use a proxy ETF/fund's historical
+// *performance* (not its absolute price) to estimate historical account values.
+// Formula: value[date] = currentValue × (proxy[date] / proxy[latestDate])
+for (const acct of PROXY_ACCOUNTS) {
+  console.log(`── ${acct.name} (proxy: ${acct.proxyTicker}) ──`)
+
+  const candles = await yahooCandles(acct.proxyTicker, 'stock')
+  const dates   = Object.keys(candles).sort()
+  if (dates.length === 0) {
+    console.log(`  WARNING: no Yahoo Finance data for ${acct.proxyTicker}, skipping\n`)
+    continue
+  }
+
+  const refDate  = dates.at(-1)
+  const refPrice = candles[refDate]
+  console.log(`  reference ${refDate}: $${refPrice.toFixed(2)}, known value: $${acct.currentValue.toFixed(2)}`)
+
+  let count = 0
+  for (const [date, price] of Object.entries(candles)) {
+    const value = acct.currentValue * (price / refPrice)
+    sqlLines.push(
+      `INSERT OR REPLACE INTO nav_snapshots (snap_date,snap_hour,account_id,value,source) ` +
+      `VALUES ('${date}',23,'${acct.d1Id}',${value.toFixed(4)},'market');`
+    )
+    count++
+  }
+  console.log(`  → ${count} snapshots\n`)
+}
+
+// ── Recompute portfolio aggregate ─────────────────────────────
+// Scope to the 5 known accounts (4 SnapTrade + Canada Life proxy).
+// Pick latest snap_hour per account per date to avoid cron double-counting.
+// Require ≥4 distinct accounts: excludes weekends (BTC only) and most holidays.
+const allIds = [...ACCOUNTS.map(a => a.d1Id), ...PROXY_ACCOUNTS.map(a => a.d1Id)]
+const idList = allIds.map(id => `'${id}'`).join(',')
+sqlLines.push(
+  `DELETE FROM nav_snapshots WHERE account_id='' AND source='market';`,
+  `INSERT INTO nav_snapshots (snap_date,snap_hour,account_id,value,source) ` +
+  `SELECT snap_date,23,'',SUM(value),'market' FROM (` +
+  `SELECT account_id,snap_date,value FROM nav_snapshots n ` +
+  `WHERE account_id IN (${idList}) AND source='market' ` +
+  `AND snap_hour=(SELECT MAX(snap_hour) FROM nav_snapshots ` +
+  `WHERE snap_date=n.snap_date AND account_id=n.account_id AND source='market')` +
+  `) GROUP BY snap_date HAVING COUNT(DISTINCT account_id)>=4 ` +
+  `ON CONFLICT(snap_date,snap_hour,account_id) DO UPDATE SET value=excluded.value,source=excluded.source;`
+)
+
+console.log(`Total SQL statements: ${sqlLines.length}`)
+const sqlPath = '/tmp/nav_backfill.sql'
+writeFileSync(sqlPath, sqlLines.join('\n'))
+
+console.log('Writing to D1 (remote)…')
+execSync(`cd ${PWD} && npx wrangler d1 execute pwm_db --remote --file ${sqlPath}`, { stdio: 'inherit' })
+console.log('\nDone ✓')

@@ -5,6 +5,7 @@ import { Layout } from './components/Layout'
 import { AddTxModal } from './components/AddTxModal'
 import { Flashbar } from './components/Flashbar'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { LoginGate } from './components/LoginGate'
 import { useErrorStore } from './lib/errors'
 import { Dashboard } from './pages/Dashboard'
 import { Holdings } from './pages/Holdings'
@@ -19,6 +20,7 @@ import { Insights } from './pages/Insights'
 import { Allocation } from './pages/Allocation'
 import { CreditCards } from './pages/CreditCards'
 import { useStore } from './lib/store'
+import { STALE } from './lib/cache'
 
 function SnapTradeCallback() {
   useEffect(() => {
@@ -50,14 +52,15 @@ const qc = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: STALE.prices, // 2 min default — good for live prices; overridden per query below
+      gcTime: 30 * 60_000,     // keep data in memory 30 min so navigating back is instant
       retry: 1,
     },
   },
 })
 
 function AppShell() {
-  const { darkMode, accent } = useStore()
+  const { darkMode, accent, apiSecret } = useStore()
 
   // Sync persisted preferences to DOM on mount
   useEffect(() => {
@@ -66,6 +69,8 @@ function AppShell() {
       document.documentElement.dataset.accent = accent
     }
   }, [])
+
+  if (!apiSecret) return <LoginGate />
 
   return (
     <>

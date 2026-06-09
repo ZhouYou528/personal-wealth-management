@@ -66,7 +66,7 @@ app.post('/backfill', async (c) => {
 // Assumes current positions were held since the start of the period (buy-and-hold approximation).
 app.post('/backfill-live', async (c) => {
   const body = await c.req.json<{ days?: number }>().catch(() => ({}))
-  const days = Math.min(Number(body.days ?? 365), 1825)
+  const days = Math.min(Number(body.days ?? 365), 3650)  // up to 10 years
 
   // Linked accounts
   const allAccounts = await c.env.DB
@@ -90,6 +90,21 @@ app.post('/backfill-live', async (c) => {
   const nowTs  = Math.floor(Date.now() / 1000)
   const fromTs = nowTs - days * 86400
   let totalDates = 0
+
+  // Fetch USD/CAD rate once — CAD-priced positions must be converted to USD
+  let usdCadRate = 1.37
+  try {
+    const cached = await c.env.PRICE_CACHE.get('fx:USD', 'json') as { rates?: Record<string, number> } | null
+    if (cached?.rates?.CAD) {
+      usdCadRate = cached.rates.CAD
+    } else {
+      const fxRes = await fetch('https://api.frankfurter.app/latest?base=USD&symbols=CAD', { signal: AbortSignal.timeout(3000) })
+      if (fxRes.ok) {
+        const fxData = await fxRes.json() as { rates: { CAD: number } }
+        usdCadRate = fxData.rates.CAD
+      }
+    }
+  } catch { /* use fallback */ }
 
   // Helper: fetch Finnhub daily closes → { "YYYY-MM-DD": price }
   async function finnhubCandles(sym: string): Promise<Record<string, number>> {
@@ -132,30 +147,37 @@ app.post('/backfill-live', async (c) => {
         snap.getAccountBalances(userAuth, snapAccId),
       ])
 
-      const cashTotal = balances.reduce((s, b) => s + (b.cash ?? 0), 0)
+      // Convert each currency's cash to USD
+      const cashTotalUsd = balances.reduce((s, b) => {
+        const amount = b.cash ?? 0
+        return s + (b.currency?.code === 'CAD' ? amount / usdCadRate : amount)
+      }, 0)
 
-      // date → value accumulator (starts with flat cash)
+      // date → USD value accumulator
       const dateValue: Record<string, number> = {}
 
       for (const pos of unified) {
         const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
         if (instrKind === 'option') continue  // skip options — no liquid historical option prices
+        if (instrKind === 'other' || instrKind === 'mutualfund') continue  // mutual funds have no exchange price history
         const qty = Number(pos.units) || 0
         const sym = pos.instrument?.symbol
         if (!sym || !qty) continue
 
+        const isCAD = (pos.currency ?? '').toUpperCase() === 'CAD'
         const candles = isCrypto(sym)
           ? await coinGeckoCandles(sym)
           : await finnhubCandles(sym)
 
         for (const [date, price] of Object.entries(candles)) {
-          dateValue[date] = (dateValue[date] ?? 0) + qty * price
+          const priceUsd = isCAD ? price / usdCadRate : price
+          dateValue[date] = (dateValue[date] ?? 0) + qty * priceUsd
         }
       }
 
       // Add cash to every date we have equity data for
       for (const date of Object.keys(dateValue)) {
-        dateValue[date] += cashTotal
+        dateValue[date] += cashTotalUsd
       }
 
       // Write per-account snapshots
@@ -168,15 +190,29 @@ app.post('/backfill-live', async (c) => {
     }
   }
 
-  // Recompute aggregate (account_id='') from market-only per-account rows
-  await c.env.DB.prepare(`
-    INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
-    SELECT snap_date, 23, '', SUM(value), 'market'
-    FROM nav_snapshots
-    WHERE account_id != '' AND source = 'market'
-    GROUP BY snap_date
-    ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
-  `).run()
+  // Recompute aggregate scoped to SnapTrade-linked accounts only (excludes manually-tracked
+  // accounts whose cron snapshots would inflate counts on weekends/holidays).
+  // Require ≥3 distinct linked accounts so crypto-only weekends are excluded.
+  const linkedIds = [...reverseMap.values()]
+  if (linkedIds.length > 0) {
+    const placeholders = linkedIds.map(() => '?').join(',')
+    const minAccounts = Math.min(3, linkedIds.length)
+    await c.env.DB.prepare(`
+      INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
+      SELECT snap_date, 23, '', SUM(value), 'market'
+      FROM (
+        SELECT account_id, snap_date, value FROM nav_snapshots n
+        WHERE account_id IN (${placeholders}) AND source = 'market'
+          AND snap_hour = (
+            SELECT MAX(snap_hour) FROM nav_snapshots
+            WHERE snap_date = n.snap_date AND account_id = n.account_id AND source = 'market'
+          )
+      )
+      GROUP BY snap_date
+      HAVING COUNT(DISTINCT account_id) >= ${minAccounts}
+      ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
+    `).bind(...linkedIds).run()
+  }
 
   return c.json({ ok: true, dates: totalDates })
 })

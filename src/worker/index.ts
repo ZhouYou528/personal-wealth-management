@@ -15,8 +15,27 @@ import creditCardsRoutes  from './routes/creditcards'
 import snaptradeRoutes    from './routes/snaptrade'
 import * as q             from './db/queries'
 
+// Constant-time string comparison to prevent timing attacks
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
 const api = new Hono<{ Bindings: Env }>()
   .use('*', cors())
+  // Auth guard — if APP_SECRET is set, every /api/* request must include
+  // Authorization: Bearer <APP_SECRET>. If unset (local dev), the guard is bypassed.
+  .use('*', async (c, next) => {
+    const secret = c.env.APP_SECRET
+    if (!secret) return next()
+    const auth = c.req.header('Authorization') ?? ''
+    if (!auth.startsWith('Bearer ') || !timingSafeEqual(auth.slice(7), secret)) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+    return next()
+  })
   .route('/accounts',     accountsRoutes)
   .route('/transactions', transactionsRoutes)
   .route('/holdings',     holdingsRoutes)

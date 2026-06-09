@@ -54,5 +54,13 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Safe-area utilities for iPhone notch / home indicator
+    function({ addUtilities }) {
+      addUtilities({
+        '.pb-safe': { paddingBottom: 'env(safe-area-inset-bottom)' },
+        '.pb-tab-bar': { paddingBottom: 'calc(58px + env(safe-area-inset-bottom))' },
+      })
+    },
+  ],
 }

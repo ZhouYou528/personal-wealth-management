@@ -3,6 +3,10 @@ import { persist } from 'zustand/middleware'
 import type { Transaction } from '@shared/types'
 
 interface UIStore {
+  // API auth secret (stored in localStorage, entered once at login)
+  apiSecret: string | null
+  setApiSecret: (s: string | null) => void
+
   // Account filter — null = all accounts
   selectedAccountId: string | null
   setSelectedAccountId: (id: string | null) => void
@@ -49,6 +53,9 @@ interface UIStore {
 export const useStore = create<UIStore>()(
   persist(
     (set) => ({
+      apiSecret: null,
+      setApiSecret: (apiSecret) => set({ apiSecret }),
+
       selectedAccountId: null,
       setSelectedAccountId: (id) => set({ selectedAccountId: id }),
 
@@ -84,6 +91,7 @@ export const useStore = create<UIStore>()(
     {
       name: 'meridian-ui',
       partialize: (s: UIStore) => ({
+        apiSecret: s.apiSecret,
         darkMode: s.darkMode,
         accent: s.accent,
         currency: s.currency,
