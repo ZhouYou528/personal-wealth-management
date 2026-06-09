@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
   RefreshCw, X, Wallet, BookOpen, Upload, Repeat, BarChart3, Scale,
-  Moon, Sun, MoreHorizontal, ChevronRight,
+  Moon, Sun, MoreHorizontal, ChevronRight, CreditCard,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
@@ -20,10 +20,11 @@ const PRIMARY_NAV = [
 ]
 
 const SECONDARY_NAV = [
-  { to: '/accounts',  label: 'Accounts',  icon: Wallet },
-  { to: '/goals',     label: 'Goals',     icon: Target },
-  { to: '/recurring', label: 'Recurring', icon: Repeat },
-  { to: '/import',    label: 'Import',    icon: Upload },
+  { to: '/accounts',     label: 'Accounts',     icon: Wallet },
+  { to: '/goals',        label: 'Goals',        icon: Target },
+  { to: '/recurring',    label: 'Recurring',    icon: Repeat },
+  { to: '/credit-cards', label: 'Cards',        icon: CreditCard },
+  { to: '/import',       label: 'Import',       icon: Upload },
 ]
 
 // Bottom tabs: first 4 + More
@@ -36,12 +37,13 @@ const BOTTOM_TABS = [
 
 // "More" sheet items
 const MORE_ITEMS = [
-  { to: '/insights',   label: 'Insights',   icon: BarChart3 },
-  { to: '/allocation', label: 'Allocation', icon: Scale },
-  { to: '/accounts',   label: 'Accounts',   icon: Wallet },
-  { to: '/goals',      label: 'Goals',      icon: Target },
-  { to: '/recurring',  label: 'Recurring',  icon: Repeat },
-  { to: '/import',     label: 'Import',     icon: Upload },
+  { to: '/insights',     label: 'Insights',   icon: BarChart3 },
+  { to: '/allocation',   label: 'Allocation', icon: Scale },
+  { to: '/accounts',     label: 'Accounts',   icon: Wallet },
+  { to: '/goals',        label: 'Goals',      icon: Target },
+  { to: '/recurring',    label: 'Recurring',  icon: Repeat },
+  { to: '/credit-cards', label: 'Cards',      icon: CreditCard },
+  { to: '/import',       label: 'Import',     icon: Upload },
 ]
 
 type NavDef = { to: string; label: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> }

@@ -62,6 +62,10 @@ export const transactions = {
 
 // ── Holdings ────────────────────────────────────────────────
 
+export const quotes = {
+  get: (symbol: string) => request<{ price: number; change?: number; changePct?: number }>(`/holdings/quote/${encodeURIComponent(symbol)}`),
+}
+
 export const holdings = {
   list: (accountId?: string, prices = true) => {
     const qs = new URLSearchParams({ prices: String(prices) })
@@ -147,6 +151,126 @@ export interface FxResponse { base: string; date: string; rates: Record<string, 
 
 export const fx = {
   rates: (base = 'USD') => request<FxResponse>(`/fx?base=${encodeURIComponent(base)}`),
+}
+
+// ── Credit Cards ─────────────────────────────────────────────
+
+import type { CreditCard } from '@shared/types'
+
+export const creditCards = {
+  list:   ()                                               => request<CreditCard[]>('/credit-cards'),
+  create: (body: Omit<CreditCard, 'id' | 'created_at'>)   => request<{ ok: boolean; id: string }>('/credit-cards', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<CreditCard>)          => request<{ ok: boolean }>(`/credit-cards/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: (id: string)                                     => request<{ ok: boolean }>(`/credit-cards/${id}`, { method: 'DELETE' }),
+}
+
+// ── SnapTrade ────────────────────────────────────────────────
+
+export interface SyncActivity {
+  id: string
+  date: string
+  type: string
+  txType: string
+  symbol: string | null
+  qty: number
+  price: number
+  total: number
+  currency: string
+  description: string
+  matched: boolean
+  matchedTxId: string | null
+}
+
+export interface SyncD1Only {
+  id: string
+  date: string
+  type: string
+  symbol?: string | null
+  qty?: number | null
+  total: number
+}
+
+export interface SyncPreviewResponse {
+  activities: SyncActivity[]
+  d1Only: SyncD1Only[]
+}
+
+export interface SnapBrokerage {
+  id: string
+  name: string
+  display_name: string
+  slug: string
+  url: string
+  aws_s3_logo_url: string | null
+  description: string | null
+  enabled: boolean
+  maintenance_mode: boolean
+}
+
+export interface SnapBrokerAccount {
+  id: string
+  name: string
+  institution: string
+  number: string
+  type: string
+  linkedTo: { id: string; name: string; snaptrade_account_id: string } | null
+}
+
+export interface ImportAccountItem {
+  snapAccountId: string
+  action: 'create' | 'link' | 'skip'
+  d1AccountId?: string
+  name?: string
+  institution?: string
+  accountType?: string
+}
+
+export const snaptrade = {
+  status: () =>
+    request<{ registered: boolean; linkedAccounts: number }>('/snaptrade/status'),
+
+  register: () =>
+    request<{ ok: boolean; already?: boolean }>('/snaptrade/register', { method: 'POST' }),
+
+  brokerages: () =>
+    request<SnapBrokerage[]>('/snaptrade/brokerages'),
+
+  getConnectUrl: (body: { broker?: string; redirectUri?: string }) =>
+    request<{ url: string }>('/snaptrade/connect', { method: 'POST', body: JSON.stringify(body) }),
+
+  brokerAccounts: () =>
+    request<SnapBrokerAccount[]>('/snaptrade/broker-accounts'),
+
+  importAccounts: (accounts: ImportAccountItem[]) =>
+    request<{ ok: boolean; results: { snapAccountId: string; d1AccountId: string; action: string }[] }>(
+      '/snaptrade/import-accounts',
+      { method: 'POST', body: JSON.stringify({ accounts }) },
+    ),
+
+  link: (accountId: string, snapAccountId: string) =>
+    request<{ ok: boolean }>('/snaptrade/link', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, snapAccountId }),
+    }),
+
+  unlink: (accountId: string) =>
+    request<{ ok: boolean }>(`/snaptrade/link/${accountId}`, { method: 'DELETE' }),
+
+  disconnect: () =>
+    request<{ ok: boolean }>('/snaptrade/register', { method: 'DELETE' }),
+
+  syncPreview: (accountId: string, startDate?: string, endDate?: string) => {
+    const qs = new URLSearchParams({ accountId })
+    if (startDate) qs.set('startDate', startDate)
+    if (endDate)   qs.set('endDate', endDate)
+    return request<SyncPreviewResponse>(`/snaptrade/sync-preview?${qs}`)
+  },
+
+  syncImport: (accountId: string, activityIds: string[], startDate?: string, endDate?: string) =>
+    request<{ ok: boolean; imported: number }>('/snaptrade/sync-import', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, activityIds, startDate, endDate }),
+    }),
 }
 
 // ── NAV ──────────────────────────────────────────────────────

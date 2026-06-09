@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { PageLoader } from '@/components/ui/spinner'
 import { TrendingUp, TrendingDown, DollarSign, CalendarClock, Wallet, PiggyBank, Activity } from 'lucide-react'
 import { transactions as txApi, accounts as accountsApi } from '@/lib/api'
 import { useMoney } from '@/lib/money'
@@ -101,7 +102,7 @@ export function Insights() {
   )
 
   if (isLoading) {
-    return <div className="p-8 text-text-3 text-small text-center">Loading…</div>
+    return <PageLoader />
   }
 
   return (

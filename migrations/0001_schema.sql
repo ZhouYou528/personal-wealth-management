@@ -121,6 +121,34 @@ CREATE TABLE IF NOT EXISTS nav_snapshots (
   PRIMARY KEY (snap_date, account_id)
 );
 
+-- Credit card churning tracker
+CREATE TABLE IF NOT EXISTS credit_cards (
+  id                  TEXT PRIMARY KEY,
+  name                TEXT NOT NULL,
+  issuer              TEXT NOT NULL,
+  network             TEXT NOT NULL DEFAULT 'Visa',
+  market              TEXT NOT NULL DEFAULT 'US',       -- 'US' | 'CA'
+  status              TEXT NOT NULL DEFAULT 'active',   -- 'active' | 'cancelled'
+  open_date           TEXT NOT NULL,
+  cancel_date         TEXT,
+  annual_fee          REAL NOT NULL DEFAULT 0,
+  first_year_free     INTEGER NOT NULL DEFAULT 0,
+  bureau              TEXT NOT NULL DEFAULT 'Experian', -- Experian | Equifax | TransUnion
+  hard_pull           INTEGER NOT NULL DEFAULT 1,
+  bonus               INTEGER NOT NULL DEFAULT 0,       -- points
+  currency            TEXT NOT NULL DEFAULT 'UR',       -- MR/UR/C1/TYP/Aeroplan/Avion/ScenePlus/Cash
+  bonus_met           INTEGER NOT NULL DEFAULT 0,
+  bonus_met_date      TEXT,
+  min_spend_req       REAL NOT NULL DEFAULT 0,
+  min_spend_deadline  TEXT,
+  min_spend_current   REAL NOT NULL DEFAULT 0,
+  points_balance      INTEGER NOT NULL DEFAULT 0,
+  note                TEXT,
+  c1                  TEXT NOT NULL DEFAULT '#1d6b4a',
+  c2                  TEXT NOT NULL DEFAULT '#0f4530',
+  created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 INSERT OR IGNORE INTO accounts (id, name, type, institution, color, number) VALUES
   ('acc_rrsp',   'RRSP',          'RRSP',            'Questrade',    '#10B981', '4421'),
   ('acc_tfsa',   'TFSA',          'TFSA',             'Wealthsimple', '#3B82F6', '8812'),

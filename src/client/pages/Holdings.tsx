@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { ListLoader } from '@/components/ui/spinner'
 import { useNavigate } from 'react-router-dom'
 import { useState, useMemo } from 'react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
@@ -224,7 +225,7 @@ export function Holdings() {
       </div>
 
       {isLoading ? (
-        <div className="text-text-3 text-small py-8 text-center">Loading…</div>
+        <ListLoader />
       ) : (
         <>
           {/* ── Desktop table ──────────────────────────────────────── */}

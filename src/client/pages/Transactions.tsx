@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Pencil, Trash2, SlidersHorizontal, X } from 'lucide-react'
+import { Pencil, Trash2, SlidersHorizontal, X, Wifi } from 'lucide-react'
+import { ListLoader } from '@/components/ui/spinner'
 import { transactions as txApi, accounts as accountsApi, nav as navApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { Glyph } from '@/components/Glyph'
@@ -237,13 +238,13 @@ export function Transactions() {
       )}
 
       {isLoading ? (
-        <div className="text-text-3 text-small py-8 text-center">Loading…</div>
+        <ListLoader />
       ) : (
         <div className="space-y-6">
           {groups.map(([day, txs]) => (
             <div key={day}>
               <p className="text-micro text-text-3 uppercase tracking-wider mb-2">{dayLabel(day)}</p>
-              <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush divide-y divide-border">
+              <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush divide-y divide-border overflow-hidden">
                 {txs.map(tx => {
                   const optCash = isOptCash(tx.note)
                   const meta = optCash
@@ -265,20 +266,28 @@ export function Transactions() {
                       )}
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-small font-medium" style={{ color: meta?.color }}>
                             {meta?.label}
                           </span>
                           {tx.symbol && !optCash && (
-                            <span className="text-small text-text font-medium">
-                              {(tx.type === 'buy_option' || tx.type === 'sell_option')
-                                ? fmtOptionLabel({ ...tx, symbol: tx.symbol })
-                                : tx.symbol}
+                            <span className="font-mono text-[11px] font-bold bg-surface-2 text-text px-1.5 py-0.5 rounded leading-none">
+                              {tx.symbol}
                             </span>
                           )}
                           {tx.type === 'split' && tx.qty && tx.price ? (
                             <span className="text-[11px] text-text-3 tabular">
                               {tx.qty}:{tx.price} ratio
+                            </span>
+                          ) : (tx.type === 'buy_option' || tx.type === 'sell_option') && tx.symbol ? (
+                            <span className="text-[11px] text-text-3">
+                              {(() => {
+                                const cp = tx.option_type === 'put' ? 'P' : 'C'
+                                const strike = tx.strike != null ? `${tx.strike}${cp}` : cp
+                                if (!tx.expiry) return strike
+                                const d = new Date(tx.expiry + 'T00:00:00')
+                                return `${strike} ${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`
+                              })()}
                             </span>
                           ) : tx.type === 'transfer_out' && tx.qty ? (
                             <span className="text-[11px] text-text-3">
@@ -311,21 +320,28 @@ export function Transactions() {
                             : fmt(Math.abs(tx.total))}
                       </span>
 
-                      {/* Edit/delete: always visible on touch, hover-only on desktop */}
-                      <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                        <Button variant="ghost" size="icon"
-                          onClick={() => openEditTx(tx)}>
-                          <Pencil size={13} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="hover:text-down"
-                          onClick={() => deleteMutation.mutate({ id: tx.id, accountId: tx.account_id })}
-                        >
-                          <Trash2 size={13} />
-                        </Button>
-                      </div>
+                      {/* Edit/delete for manual; Live badge for SnapTrade rows */}
+                      {tx.id.startsWith('snap_') ? (
+                        <span className="flex items-center gap-0.5 text-[10px] text-up font-medium px-1.5 opacity-60">
+                          <Wifi size={10} />
+                          Live
+                        </span>
+                      ) : (
+                        <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          <Button variant="ghost" size="icon"
+                            onClick={() => openEditTx(tx)}>
+                            <Pencil size={13} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="hover:text-down"
+                            onClick={() => deleteMutation.mutate({ id: tx.id, accountId: tx.account_id })}
+                          >
+                            <Trash2 size={13} />
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

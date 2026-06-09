@@ -12,6 +12,7 @@ export interface Account {
   institution: string
   color: string
   number: string
+  snaptrade_account_id?: string | null
   created_at: string
 }
 
@@ -160,4 +161,39 @@ export interface TickerSearchResult {
 // API response shapes
 export interface ApiError {
   error: string
+}
+
+// ── Credit card tracking ──────────────────────────────────────
+
+export type CreditCardMarket   = 'US' | 'CA'
+export type CreditCardStatus   = 'active' | 'cancelled'
+export type CreditCardCurrency = 'MR' | 'UR' | 'C1' | 'TYP' | 'Aeroplan' | 'Avion' | 'ScenePlus' | 'Cash'
+export type CreditCardNetwork  = 'Visa' | 'Mastercard' | 'Amex'
+export type CreditCardBureau   = 'Experian' | 'Equifax' | 'TransUnion'
+
+export interface CreditCard {
+  id:                 string
+  name:               string
+  issuer:             string
+  network:            CreditCardNetwork
+  market:             CreditCardMarket
+  status:             CreditCardStatus
+  open_date:          string
+  cancel_date:        string | null
+  annual_fee:         number
+  first_year_free:    number   // 0 | 1
+  bureau:             CreditCardBureau
+  hard_pull:          number   // 0 | 1
+  bonus:              number   // points
+  currency:           CreditCardCurrency
+  bonus_met:          number   // 0 | 1
+  bonus_met_date:     string | null
+  min_spend_req:      number
+  min_spend_deadline: string | null
+  min_spend_current:  number
+  points_balance:     number
+  note:               string | null
+  c1:                 string
+  c2:                 string
+  created_at:         string
 }

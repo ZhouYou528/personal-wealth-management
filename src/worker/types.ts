@@ -4,5 +4,7 @@ export interface Env {
   ASSETS: Fetcher
   FINNHUB_KEY: string
   COINGECKO_KEY: string
+  SNAPTRADE_CLIENT_ID: string
+  SNAPTRADE_CONSUMER_KEY: string
   ENVIRONMENT?: string
 }

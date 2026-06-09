@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ListLoader } from '@/components/ui/spinner'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Play, Pause, Calendar, Pencil } from 'lucide-react'
 import { recurring as recurringApi, accounts as accountsApi, nav as navApi, fx as fxApi } from '@/lib/api'
@@ -91,7 +92,7 @@ export function Recurring() {
       </div>
 
       {isLoading ? (
-        <p className="text-text-3 text-small py-8 text-center">Loading…</p>
+        <ListLoader />
       ) : rules.length === 0 ? (
         <div className="border border-dashed border-border rounded-md p-12 text-center">
           <Calendar size={28} className="text-text-3 mx-auto mb-2" />

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft } from 'lucide-react'
-import { holdings as holdingsApi, transactions as txApi, nav as navApi, fx as fxApi } from '@/lib/api'
+import { holdings as holdingsApi, transactions as txApi, nav as navApi, fx as fxApi, accounts as accountsApi, quotes as quotesApi } from '@/lib/api'
+import { PageLoader } from '@/components/ui/spinner'
 import { Glyph } from '@/components/Glyph'
 import { KindBadge } from '@/components/ui/badge'
 import { ChangePill } from '@/components/ChangePill'
@@ -38,7 +39,10 @@ export function HoldingDetail() {
     queryFn: () => holdingsApi.list(selectedAccountId ?? undefined),
   })
 
+  const { data: accs = [] } = useQuery({ queryKey: ['accounts'], queryFn: accountsApi.list })
+
   const holding = allHoldings.find(h => h.id === decodeURIComponent(id ?? ''))
+  const isLive = !!(accs.find(a => a.id === holding?.account_id)?.snaptrade_account_id)
 
   // If the holding's gone (e.g. fully sold), bounce back to the list once the query has settled
   useEffect(() => {
@@ -64,6 +68,15 @@ export function HoldingDetail() {
       return txApi.list({ symbol: holding.symbol })
     },
     enabled: !!holding,
+  })
+
+  // Fetch underlying stock price for options (before early returns — hooks must be unconditional)
+  const underlyingSymbol = holding?.kind === 'option' ? (holding?.underlying ?? holding?.symbol ?? null) : null
+  const { data: underlyingQuote } = useQuery({
+    queryKey: ['quote', underlyingSymbol],
+    queryFn: () => quotesApi.get(underlyingSymbol!),
+    enabled: !!underlyingSymbol,
+    staleTime: 60_000,
   })
 
   // All mutation hooks must be declared before any early return — closure refs to `holding`
@@ -114,7 +127,7 @@ export function HoldingDetail() {
   })
 
   if (isLoading) {
-    return <div className="p-8 text-text-3 text-small">Loading…</div>
+    return <PageLoader />
   }
 
   if (!holding) {
@@ -128,6 +141,21 @@ export function HoldingDetail() {
   const pnlPct = costTotal > 0 ? (pnl / costTotal) * 100 : 0
   const isOption = holding.kind === 'option'
   const dte = isOption ? daysToExpiry(holding.expiry) : null
+
+  // Option-specific computed values
+  const optionTxs = isOption
+    ? txs.filter(tx => tx.option_type === holding.option_type && tx.strike === holding.strike && tx.expiry === holding.expiry)
+    : []
+  const buyTxs = optionTxs
+    .filter(t => t.type === 'buy_option' || t.type === 'buy')
+    .sort((a, b) => a.tx_date.localeCompare(b.tx_date))
+  const buyDates = [...new Set(buyTxs.map(t => t.tx_date))].sort()
+  const dateBoughtDisplay = buyDates.length === 0 ? '—'
+    : buyDates.length === 1 ? fmtDate(buyDates[0])
+    : `${fmtDate(buyDates[0])} · ${fmtDate(buyDates[buyDates.length - 1])}`
+  const breakeven = isOption
+    ? (holding.option_type === 'put' ? (holding.strike ?? 0) - holding.cost : (holding.strike ?? 0) + holding.cost)
+    : 0
 
   const TX_LABELS: Record<string, string> = {
     buy: 'Buy', sell: 'Sell', buy_crypto: 'Buy', sell_crypto: 'Sell',
@@ -157,7 +185,7 @@ export function HoldingDetail() {
                 <h1 className="text-[18px] sm:text-[22px] font-semibold text-text">
                   {isOption ? fmtOptionLabel(holding) : holding.symbol}
                 </h1>
-                {isOption || isCash ? (
+                {isOption || isCash || isLive ? (
                   <KindBadge kind={holding.kind} />
                 ) : (
                   <KindSelect
@@ -182,53 +210,55 @@ export function HoldingDetail() {
               </p>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            {isOption ? (
-              <>
-                <Button
-                  variant="outline" size="sm"
-                  disabled={expireWorthlessMut.isPending}
-                  onClick={() => {
-                    if (confirm(`Mark all ${fmtQty(holding.qty)} contract(s) as expired worthless?`)) {
-                      expireWorthlessMut.mutate()
-                    }
-                  }}
-                >
-                  Expire worthless
-                </Button>
-                <Button size="sm" onClick={() => openAddTx({
-                  symbol: holding.symbol,
-                  type: holding.qty < 0 ? 'buy_option' : 'sell_option',
-                  accountId: holding.account_id,
-                  optionType: holding.option_type ?? undefined,
-                  strike: holding.strike != null ? String(holding.strike) : undefined,
-                  expiry: holding.expiry ?? undefined,
-                  qty: String(Math.abs(holding.qty)),
-                  hideOptionFields: true,
-                })}>
-                  Close position
-                </Button>
-              </>
-            ) : isCash ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => openAddTx({ accountId: holding.account_id, type: 'withdraw' })}>
-                  Withdraw
-                </Button>
-                <Button size="sm" onClick={() => openAddTx({ accountId: holding.account_id, type: 'deposit' })}>
-                  Deposit
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="outline" size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'sell' })}>
-                  Sell
-                </Button>
-                <Button size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'buy' })}>
-                  Buy more
-                </Button>
-              </>
-            )}
-          </div>
+          {!isLive && (
+            <div className="flex gap-2 flex-wrap">
+              {isOption ? (
+                <>
+                  <Button
+                    variant="outline" size="sm"
+                    disabled={expireWorthlessMut.isPending}
+                    onClick={() => {
+                      if (confirm(`Mark all ${fmtQty(holding.qty)} contract(s) as expired worthless?`)) {
+                        expireWorthlessMut.mutate()
+                      }
+                    }}
+                  >
+                    Expire worthless
+                  </Button>
+                  <Button size="sm" onClick={() => openAddTx({
+                    symbol: holding.symbol,
+                    type: holding.qty < 0 ? 'buy_option' : 'sell_option',
+                    accountId: holding.account_id,
+                    optionType: holding.option_type ?? undefined,
+                    strike: holding.strike != null ? String(holding.strike) : undefined,
+                    expiry: holding.expiry ?? undefined,
+                    qty: String(Math.abs(holding.qty)),
+                    hideOptionFields: true,
+                  })}>
+                    Close position
+                  </Button>
+                </>
+              ) : isCash ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => openAddTx({ accountId: holding.account_id, type: 'withdraw' })}>
+                    Withdraw
+                  </Button>
+                  <Button size="sm" onClick={() => openAddTx({ accountId: holding.account_id, type: 'deposit' })}>
+                    Deposit
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'sell' })}>
+                    Sell
+                  </Button>
+                  <Button size="sm" onClick={() => openAddTx({ symbol: holding.symbol, accountId: holding.account_id, type: 'buy' })}>
+                    Buy more
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="mt-4 flex items-baseline gap-3 flex-wrap">
@@ -243,7 +273,7 @@ export function HoldingDetail() {
           )}
         </div>
 
-        {(isOption || holding.kind === 'mutual_fund') && (
+        {!isLive && (isOption || holding.kind === 'mutual_fund') && (
           <MarkEditor
             holdingId={holding.id}
             currentPx={holding.px}
@@ -257,7 +287,34 @@ export function HoldingDetail() {
       </Card>
 
       {/* Stats */}
-      {isCash ? (() => {
+      {isOption ? (
+        <Card>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-5">
+            <Stat label="Contracts" value={fmtQty(holding.qty)} />
+            <Stat label="Current price" value={fmt(holding.px)} sub="per share" />
+            <Stat label="Average cost" value={fmt(holding.cost)} sub="per share" />
+            <Stat label="Market value" value={fmt(value)} />
+            <Stat label="Date bought" value={dateBoughtDisplay} />
+            <Stat label="Expiration date" value={holding.expiry ? fmtDate(holding.expiry) : '—'} />
+            <Stat
+              label={`${holding.underlying ?? holding.symbol} breakeven`}
+              value={fmt(breakeven)}
+            />
+            <Stat
+              label={`Current ${holding.underlying ?? holding.symbol} price`}
+              value={underlyingQuote?.price ? fmt(underlyingQuote.price) : '—'}
+            />
+          </div>
+          <div className="mt-5 pt-4 border-t border-border">
+            <div className="flex justify-between items-center">
+              <span className="text-small text-text-3">Total return</span>
+              <span className={`tabular font-semibold text-small private-val ${pnl >= 0 ? 'text-up' : 'text-down'}`}>
+                {pnl >= 0 ? '+' : ''}{fmt(pnl)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)
+              </span>
+            </div>
+          </div>
+        </Card>
+      ) : isCash ? (() => {
         // For cash holdings: replace the standard four-stat row with Total / Locked / Available.
         // `locked` comes from open short puts in the same account.
         const sameAccountHoldings = allHoldings.filter(h => h.account_id === holding.account_id)
@@ -300,13 +357,7 @@ export function HoldingDetail() {
             />
           </Card>
           <Card>
-            <Stat
-              label={isOption ? 'Contracts' : 'Quantity'}
-              value={fmtQty(holding.qty)}
-              sub={isOption
-                ? `× ${holding.multiplier ?? 100} shares · ${holding.option_type ?? ''} ${holding.strike ?? ''}`
-                : holding.kind}
-            />
+            <Stat label="Quantity" value={fmtQty(holding.qty)} sub={holding.kind} />
           </Card>
         </div>
       )}
