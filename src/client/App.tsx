@@ -1,8 +1,11 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { Layout } from './components/Layout'
 import { AddTxModal } from './components/AddTxModal'
+import { Flashbar } from './components/Flashbar'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { useErrorStore } from './lib/errors'
 import { Dashboard } from './pages/Dashboard'
 import { Holdings } from './pages/Holdings'
 import { HoldingDetail } from './pages/HoldingDetail'
@@ -33,7 +36,18 @@ function SnapTradeCallback() {
   )
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
 const qc = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (err) => useErrorStore.getState().pushError(errorMessage(err)),
+  }),
+  mutationCache: new MutationCache({
+    onError: (err) => useErrorStore.getState().pushError(errorMessage(err)),
+  }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,
@@ -81,7 +95,10 @@ export function App() {
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
-        <AppShell />
+        <ErrorBoundary>
+          <AppShell />
+        </ErrorBoundary>
+        <Flashbar />
       </BrowserRouter>
     </QueryClientProvider>
   )

@@ -2,7 +2,7 @@ import type { Quote } from '@shared/types'
 
 // ---------- Crypto symbol → CoinGecko ID ----------
 
-const COINGECKO_ID: Record<string, string> = {
+export const COINGECKO_ID: Record<string, string> = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
   XRP: 'ripple', ADA: 'cardano', AVAX: 'avalanche-2', DOGE: 'dogecoin',
   DOT: 'polkadot', MATIC: 'matic-network', LINK: 'chainlink',

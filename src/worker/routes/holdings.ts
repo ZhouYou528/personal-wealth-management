@@ -25,16 +25,25 @@ async function resolveQuote(
   if (symbol === 'CASH') return { price: 1 }
   if (kind === 'option' || kind === 'mutual_fund') return { price: fallback }
   const cacheKey = `quote:${symbol}`
-  const cached = await env.PRICE_CACHE.get(cacheKey, 'json') as Quote | null
-  if (cached) return { price: cached.price, change: cached.change, changePct: cached.changePct }
 
-  const quote = isCrypto(symbol)
-    ? await fetchCoinGeckoQuote(symbol, env.COINGECKO_KEY)
-    : await fetchFinnhubQuote(symbol, env.FINNHUB_KEY)
+  try {
+    const cached = await env.PRICE_CACHE.get(cacheKey, 'json') as Quote | null
+    if (cached) return { price: cached.price, change: cached.change, changePct: cached.changePct }
+  } catch {
+    // KV unavailable, fall through to live fetch
+  }
 
-  if (quote) {
-    await env.PRICE_CACHE.put(cacheKey, JSON.stringify(quote), { expirationTtl: 60 })
-    return { price: quote.price, change: quote.change, changePct: quote.changePct }
+  try {
+    const quote = isCrypto(symbol)
+      ? await fetchCoinGeckoQuote(symbol, env.COINGECKO_KEY)
+      : await fetchFinnhubQuote(symbol, env.FINNHUB_KEY)
+
+    if (quote) {
+      try { await env.PRICE_CACHE.put(cacheKey, JSON.stringify(quote), { expirationTtl: 60 }) } catch { /* non-fatal */ }
+      return { price: quote.price, change: quote.change, changePct: quote.changePct }
+    }
+  } catch {
+    // live fetch failed
   }
   return { price: fallback }
 }
@@ -65,6 +74,7 @@ function unifiedKind(kind: string): AssetKind {
 const app = new Hono<{ Bindings: Env }>()
 
 app.get('/', async (c) => {
+  try {
   const accountId = c.req.query('accountId') ?? undefined
   const withPrices = c.req.query('prices') !== 'false'
 
@@ -93,9 +103,7 @@ app.get('/', async (c) => {
 
   {
     const transactions = await q.getAllTransactionsForHoldings(c.env.DB, accountId)
-    const raw = computeHoldings(transactions).filter(h =>
-      linkedMap.has(h.account_id) ? h.kind === 'option' : true
-    )
+    const raw = computeHoldings(transactions).filter(h => !linkedMap.has(h.account_id))
 
     d1Holdings = await Promise.all(
       raw.map(async (h) => {
@@ -152,7 +160,8 @@ app.get('/', async (c) => {
           continue
         }
 
-        for (const pos of unified) {
+        for (const pos of (Array.isArray(unified) ? unified : [])) {
+          try {
           const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
           const qty  = Number(pos.units) || 0
           const cost = Number(pos.cost_basis) || 0
@@ -198,10 +207,16 @@ app.get('/', async (c) => {
           const holdingId = `${d1Id}:${sym}`
 
           let qt: ResolvedQuote
-          if (marks[holdingId] != null) qt = { price: marks[holdingId] }
-          else if (livePrice != null) qt = { price: livePrice }
-          else if (!withPrices) qt = { price: cost }
-          else qt = await resolveQuote(sym, kind, cost, c.env)
+          if (marks[holdingId] != null) {
+            qt = { price: marks[holdingId] }
+          } else if (!withPrices) {
+            qt = { price: livePrice ?? cost }
+          } else {
+            // Always call resolveQuote (KV-cached) to get change/changePct for Top Movers.
+            // Prefer broker's live price over Finnhub price for accuracy.
+            const fetched = await resolveQuote(sym, kind, livePrice ?? cost, c.env)
+            qt = { price: livePrice ?? fetched.price, change: fetched.change, changePct: fetched.changePct }
+          }
 
           snapHoldings.push({
             id: holdingId,
@@ -216,10 +231,13 @@ app.get('/', async (c) => {
             changePct: qt.changePct,
             marked: marks[holdingId] != null,
           })
+          } catch (posErr) {
+            console.error(`SnapTrade position error for ${snapAccId}:`, pos, posErr)
+          }
         }
 
         // Map cash balances
-        for (const bal of balances) {
+        for (const bal of (Array.isArray(balances) ? balances : [])) {
           if ((bal.cash ?? 0) <= 0) continue
           const cashId = `${d1Id}:CASH`
           snapHoldings.push({
@@ -239,6 +257,10 @@ app.get('/', async (c) => {
   }
 
   return c.json([...d1Holdings, ...snapHoldings])
+  } catch (e) {
+    console.error('Holdings GET error:', e)
+    return c.json({ error: String(e) }, 500)
+  }
 })
 
 app.get('/quote/:symbol', async (c) => {

@@ -45,7 +45,52 @@ app.patch('/:id', zValidator('json', AccountSchema.partial()), async (c) => {
 })
 
 app.delete('/:id', async (c) => {
-  await q.deleteAccount(c.env.DB, c.req.param('id'))
+  const id = c.req.param('id')
+  const db = c.env.DB
+
+  // Cascade deletes for all account-scoped tables, plus wipe aggregate so it can be cleanly recomputed
+  await db.batch([
+    db.prepare('DELETE FROM transactions    WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM recurring_rules WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM nav_snapshots   WHERE account_id = ?').bind(id),
+    db.prepare("DELETE FROM holding_marks   WHERE holding_key LIKE ? || ':%'").bind(id),
+    db.prepare("DELETE FROM nav_snapshots   WHERE account_id = ''"),  // wipe aggregate
+    db.prepare('DELETE FROM accounts        WHERE id = ?').bind(id),
+  ])
+
+  // Remove deleted account from goals' account_ids JSON arrays
+  const { results: goals = [] } = await db
+    .prepare('SELECT id, account_ids FROM goals WHERE account_ids IS NOT NULL')
+    .all<{ id: string; account_ids: string }>()
+  for (const goal of goals) {
+    const ids: string[] = JSON.parse(goal.account_ids ?? '[]')
+    if (!ids.includes(id)) continue
+    const updated = ids.filter(x => x !== id)
+    await db.prepare('UPDATE goals SET account_ids = ? WHERE id = ?')
+      .bind(JSON.stringify(updated), goal.id).run()
+  }
+
+  // Remove deleted account from allocation_plans' scope_account_ids JSON arrays
+  const { results: plans = [] } = await db
+    .prepare('SELECT id, scope_account_ids FROM allocation_plans WHERE scope_account_ids IS NOT NULL')
+    .all<{ id: string; scope_account_ids: string }>()
+  for (const plan of plans) {
+    const ids: string[] = JSON.parse(plan.scope_account_ids ?? '[]')
+    if (!ids.includes(id)) continue
+    const updated = ids.filter(x => x !== id)
+    await db.prepare('UPDATE allocation_plans SET scope_account_ids = ? WHERE id = ?')
+      .bind(JSON.stringify(updated), plan.id).run()
+  }
+
+  // Recompute the aggregate nav snapshot (account_id='') to exclude deleted account's rows
+  await db.prepare(`
+    INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
+    SELECT snap_date, 23, '', SUM(value), 'market'
+    FROM nav_snapshots WHERE account_id != '' AND source = 'market'
+    GROUP BY snap_date
+    ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
+  `).run()
+
   return c.json({ ok: true })
 })
 

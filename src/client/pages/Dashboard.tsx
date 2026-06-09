@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { Glyph } from '@/components/Glyph'
-import { holdings as holdingsApi, nav as navApi, accounts as accountsApi } from '@/lib/api'
+import { holdings as holdingsApi, nav, accounts as accountsApi } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral } from '@/lib/utils'
 import { useMoney } from '@/lib/money'
@@ -148,10 +148,14 @@ function NavChart({
     return pts
   }, [navData, currentValue, range, today])
 
+  // If there's only one snapshot (no history yet), add a flat anchor so the chart renders
+  if (chartData.length === 1) {
+    chartData.unshift({ date: daysAgoDate(1), value: chartData[0].value })
+  }
   if (chartData.length < 2) {
     return (
       <div className="h-[180px] flex items-center justify-center text-text-3 text-small">
-        Import transactions to see your portfolio history
+        No portfolio history yet — data appears after the next market-hours snapshot
       </div>
     )
   }
@@ -403,6 +407,7 @@ export function Dashboard() {
   const { selectedAccountId, setSelectedAccountId } = useStore()
   const navigate = useNavigate()
   const { fmt } = useMoney()
+  const qc = useQueryClient()
   const [range, setRange] = useState<Range>('1M')
 
   const { data: holdingsData = [] } = useQuery({
@@ -412,13 +417,22 @@ export function Dashboard() {
 
   const { data: navData = [] } = useQuery({
     queryKey: ['nav', selectedAccountId, 'full'],
-    queryFn: () => navApi.history(1825, selectedAccountId ?? undefined),
+    queryFn: () => nav.history(1825, selectedAccountId ?? undefined),
   })
 
   const { data: accountsList = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
   })
+
+  // If there are holdings but no nav history, trigger a snapshot so the chart populates
+  useEffect(() => {
+    if (holdingsData.length > 0 && navData.length === 0) {
+      fetch('/api/admin/run-snapshot', { method: 'POST' })
+        .then(() => qc.invalidateQueries({ queryKey: ['nav'] }))
+        .catch(() => {})
+    }
+  }, [holdingsData.length > 0, navData.length === 0]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentValue = holdingsData.reduce((s, h) => s + h.qty * h.px * (h.multiplier ?? 1), 0)
   const costBasis    = holdingsData.reduce((s, h) => s + h.qty * h.cost * (h.multiplier ?? 1), 0)

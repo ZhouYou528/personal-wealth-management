@@ -103,7 +103,7 @@ app.get('/', async (c) => {
   if (snapUser) {
     const snap     = createSnapClient(c.env.SNAPTRADE_CLIENT_ID, c.env.SNAPTRADE_CONSUMER_KEY)
     const userAuth = { userId: snapUser.snaptrade_user_id, userSecret: snapUser.user_secret }
-    const startDate = since ?? new Date(Date.now() - 365 * 86400_000).toISOString().slice(0, 10)
+    const startDate = since  // undefined = no lower bound; SnapTrade returns max available history
     const endDate   = new Date().toISOString().slice(0, 10)
 
     for (const acct of relevant) {

@@ -218,8 +218,7 @@ export interface SnapBrokerAccount {
 
 export interface ImportAccountItem {
   snapAccountId: string
-  action: 'create' | 'link' | 'skip'
-  d1AccountId?: string
+  action: 'create' | 'skip'
   name?: string
   institution?: string
   accountType?: string
@@ -246,15 +245,6 @@ export const snaptrade = {
       '/snaptrade/import-accounts',
       { method: 'POST', body: JSON.stringify({ accounts }) },
     ),
-
-  link: (accountId: string, snapAccountId: string) =>
-    request<{ ok: boolean }>('/snaptrade/link', {
-      method: 'POST',
-      body: JSON.stringify({ accountId, snapAccountId }),
-    }),
-
-  unlink: (accountId: string) =>
-    request<{ ok: boolean }>(`/snaptrade/link/${accountId}`, { method: 'DELETE' }),
 
   disconnect: () =>
     request<{ ok: boolean }>('/snaptrade/register', { method: 'DELETE' }),
@@ -285,5 +275,10 @@ export const nav = {
     request<{ ok: boolean; dates: number }>('/nav/backfill', {
       method: 'POST',
       body: JSON.stringify({ accountId }),
+    }),
+  backfillLive: (days = 365) =>
+    request<{ ok: boolean; dates: number; message?: string }>('/nav/backfill-live', {
+      method: 'POST',
+      body: JSON.stringify({ days }),
     }),
 }

@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import type { Env } from '../types'
 import * as q from '../db/queries'
 import { computeHoldings } from '../lib/positions'
+import { isCrypto, COINGECKO_ID } from '../lib/market'
+import { createSnapClient } from '../lib/snaptrade'
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -57,6 +59,126 @@ app.post('/backfill', async (c) => {
   const total = await backfillAccount(undefined, '')
 
   return c.json({ ok: true, dates: total })
+})
+
+// POST /api/nav/backfill-live
+// Reconstructs historical NAV for SnapTrade-linked accounts using Finnhub/CoinGecko daily closes.
+// Assumes current positions were held since the start of the period (buy-and-hold approximation).
+app.post('/backfill-live', async (c) => {
+  const body = await c.req.json<{ days?: number }>().catch(() => ({}))
+  const days = Math.min(Number(body.days ?? 365), 1825)
+
+  // Linked accounts
+  const allAccounts = await c.env.DB
+    .prepare('SELECT id, snaptrade_account_id FROM accounts')
+    .all<{ id: string; snaptrade_account_id: string | null }>()
+  const reverseMap = new Map<string, string>()
+  for (const a of allAccounts.results ?? []) {
+    if (a.snaptrade_account_id) reverseMap.set(a.snaptrade_account_id, a.id)
+  }
+  if (reverseMap.size === 0) return c.json({ ok: true, dates: 0, message: 'No live accounts to backfill' })
+
+  const snapUser = await c.env.DB
+    .prepare('SELECT snaptrade_user_id, user_secret FROM snaptrade_users WHERE id = ?')
+    .bind('singleton')
+    .first<{ snaptrade_user_id: string; user_secret: string }>()
+  if (!snapUser) return c.json({ ok: false, message: 'No SnapTrade user' }, 400)
+
+  const snap = createSnapClient(c.env.SNAPTRADE_CLIENT_ID, c.env.SNAPTRADE_CONSUMER_KEY)
+  const userAuth = { userId: snapUser.snaptrade_user_id, userSecret: snapUser.user_secret }
+
+  const nowTs  = Math.floor(Date.now() / 1000)
+  const fromTs = nowTs - days * 86400
+  let totalDates = 0
+
+  // Helper: fetch Finnhub daily closes → { "YYYY-MM-DD": price }
+  async function finnhubCandles(sym: string): Promise<Record<string, number>> {
+    if (!c.env.FINNHUB_KEY) return {}
+    try {
+      const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(sym)}&resolution=D&from=${fromTs}&to=${nowTs}&token=${c.env.FINNHUB_KEY}`
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      if (!res.ok) return {}
+      const d = await res.json() as { c?: number[]; t?: number[]; s: string }
+      if (d.s !== 'ok' || !d.t || !d.c) return {}
+      const out: Record<string, number> = {}
+      for (let i = 0; i < d.t.length; i++) {
+        out[new Date(d.t[i] * 1000).toISOString().slice(0, 10)] = d.c[i]
+      }
+      return out
+    } catch { return {} }
+  }
+
+  // Helper: fetch CoinGecko daily closes → { "YYYY-MM-DD": price }
+  async function coinGeckoCandles(sym: string): Promise<Record<string, number>> {
+    const id = COINGECKO_ID[sym.toUpperCase()]
+    if (!id || !c.env.COINGECKO_KEY) return {}
+    try {
+      const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=${days}`
+      const res = await fetch(url, { headers: { 'x-cg-demo-api-key': c.env.COINGECKO_KEY }, signal: AbortSignal.timeout(8000) })
+      if (!res.ok) return {}
+      const d = await res.json() as { prices: [number, number][] }
+      const byDate: Record<string, number> = {}
+      for (const [tsMs, price] of d.prices) {
+        byDate[new Date(tsMs).toISOString().slice(0, 10)] = price
+      }
+      return byDate
+    } catch { return {} }
+  }
+
+  for (const [snapAccId, d1Id] of reverseMap) {
+    try {
+      const [unified, balances] = await Promise.all([
+        snap.getAccountAllPositions(userAuth, snapAccId),
+        snap.getAccountBalances(userAuth, snapAccId),
+      ])
+
+      const cashTotal = balances.reduce((s, b) => s + (b.cash ?? 0), 0)
+
+      // date → value accumulator (starts with flat cash)
+      const dateValue: Record<string, number> = {}
+
+      for (const pos of unified) {
+        const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
+        if (instrKind === 'option') continue  // skip options — no liquid historical option prices
+        const qty = Number(pos.units) || 0
+        const sym = pos.instrument?.symbol
+        if (!sym || !qty) continue
+
+        const candles = isCrypto(sym)
+          ? await coinGeckoCandles(sym)
+          : await finnhubCandles(sym)
+
+        for (const [date, price] of Object.entries(candles)) {
+          dateValue[date] = (dateValue[date] ?? 0) + qty * price
+        }
+      }
+
+      // Add cash to every date we have equity data for
+      for (const date of Object.keys(dateValue)) {
+        dateValue[date] += cashTotal
+      }
+
+      // Write per-account snapshots
+      for (const [date, value] of Object.entries(dateValue)) {
+        await q.upsertNavSnapshot(c.env.DB, { snap_date: date, account_id: d1Id, value, source: 'market' })
+        totalDates++
+      }
+    } catch (e) {
+      console.error(`backfill-live failed for ${snapAccId}:`, e)
+    }
+  }
+
+  // Recompute aggregate (account_id='') from market-only per-account rows
+  await c.env.DB.prepare(`
+    INSERT INTO nav_snapshots (snap_date, snap_hour, account_id, value, source)
+    SELECT snap_date, 23, '', SUM(value), 'market'
+    FROM nav_snapshots
+    WHERE account_id != '' AND source = 'market'
+    GROUP BY snap_date
+    ON CONFLICT(snap_date, snap_hour, account_id) DO UPDATE SET value = excluded.value, source = excluded.source
+  `).run()
+
+  return c.json({ ok: true, dates: totalDates })
 })
 
 export default app

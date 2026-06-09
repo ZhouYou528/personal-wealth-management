@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Check, Pencil, Plus, Trash2, X, Link2Off, Wifi,
+  Check, Pencil, Plus, Trash2, X, Wifi,
   ExternalLink, ChevronRight, Building2, ArrowDownToLine,
   ChevronDown, AlertCircle,
 } from 'lucide-react'
@@ -57,7 +57,7 @@ function AddAccountModal({
 
   // Review step: action per snap account
   const [importItems, setImportItems] = useState<
-    Record<string, { action: 'create' | 'link' | 'skip'; d1AccountId?: string; name: string; accountType: string }>
+    Record<string, { action: 'create' | 'skip'; name: string; accountType: string }>
   >({})
 
   const { data: brokerages = [], isLoading: loadingBrokerages } = useQuery({
@@ -154,15 +154,12 @@ function AddAccountModal({
     const items: ImportAccountItem[] = Object.entries(importItems).map(([snapAccountId, v]) => ({
       snapAccountId,
       action: v.action,
-      d1AccountId: v.d1AccountId,
       name: v.name,
       accountType: v.accountType,
       institution: step.kind === 'review' ? step.broker.display_name : undefined,
     }))
     importMut.mutate(items)
   }
-
-  const unlinkedD1Accounts = existingAccounts.filter(a => !a.snaptrade_account_id)
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && handleClose()}>
@@ -365,7 +362,7 @@ function AddAccountModal({
 
                         {/* Action tabs */}
                         <div className="flex gap-1">
-                          {(['create', 'link', 'skip'] as const).map(a => (
+                          {(['create', 'skip'] as const).map(a => (
                             <button
                               key={a}
                               onClick={() => setImportItems(prev => ({
@@ -379,7 +376,7 @@ function AddAccountModal({
                                   : 'border-border text-text-3 hover:border-border-strong'
                               )}
                             >
-                              {a === 'create' ? 'Create new' : a === 'link' ? 'Link existing' : 'Skip'}
+                              {a === 'create' ? 'Create new' : 'Skip'}
                             </button>
                           ))}
                         </div>
@@ -392,20 +389,6 @@ function AddAccountModal({
                             placeholder="Account name"
                             className="w-full px-2.5 py-1.5 rounded-sm border border-border bg-surface-2 text-text text-small focus:outline-none focus:border-accent"
                           />
-                        )}
-
-                        {/* Link: pick existing account */}
-                        {item.action === 'link' && (
-                          <select
-                            value={item.d1AccountId ?? ''}
-                            onChange={e => setImportItems(prev => ({ ...prev, [acc.id]: { ...prev[acc.id], d1AccountId: e.target.value } }))}
-                            className="w-full px-2.5 py-1.5 rounded-sm border border-border bg-surface-2 text-text text-small focus:outline-none focus:border-accent"
-                          >
-                            <option value="">Select account…</option>
-                            {unlinkedD1Accounts.map(a => (
-                              <option key={a.id} value={a.id}>{a.name} ({a.institution})</option>
-                            ))}
-                          </select>
                         )}
                       </div>
                     )
@@ -777,6 +760,7 @@ export function Accounts() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null)
+  const [editingColorId, setEditingColorId] = useState<string | null>(null)
 
   const { data: accs = [] } = useQuery({
     queryKey: ['accounts'],
@@ -807,11 +791,11 @@ export function Accounts() {
     },
   })
 
-  const unlinkMut = useMutation({
-    mutationFn: (id: string) => snapApi.unlink(id),
+  const updateColorMut = useMutation({
+    mutationFn: ({ id, color }: { id: string; color: string }) => accountsApi.update(id, { color }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
-      qc.invalidateQueries({ queryKey: ['holdings'] })
+      setEditingColorId(null)
     },
   })
 
@@ -861,26 +845,18 @@ export function Accounts() {
             <div
               key={acc.id}
               className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
+              onClick={() => { if (editingColorId === acc.id) setEditingColorId(null) }}
             >
               {editingId !== acc.id && (
                 <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   {isLive && (
-                    <>
-                      <button
-                        onClick={e => { e.stopPropagation(); setSyncAccount(acc) }}
-                        className="p-1 rounded hover:text-accent text-text-3"
-                        title="Sync transactions from broker"
-                      >
-                        <ArrowDownToLine size={13} />
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); if (confirm(`Disconnect live data for "${acc.name}"?`)) unlinkMut.mutate(acc.id) }}
-                        className="p-1 rounded hover:text-down text-text-3"
-                        title="Disconnect live data"
-                      >
-                        <Link2Off size={13} />
-                      </button>
-                    </>
+                    <button
+                      onClick={e => { e.stopPropagation(); setSyncAccount(acc) }}
+                      className="p-1 rounded hover:text-accent text-text-3"
+                      title="Sync transactions from broker"
+                    >
+                      <ArrowDownToLine size={13} />
+                    </button>
                   )}
                   <button
                     onClick={e => { e.stopPropagation(); startEdit(acc.id, acc.name) }}
@@ -905,7 +881,43 @@ export function Accounts() {
               )}
 
               <div className="flex items-center gap-3 mb-3">
-                <AccountTypeBadge type={acc.type} color={acc.color} />
+                <div className="relative flex-shrink-0">
+                  <button
+                    onClick={e => { e.stopPropagation(); setEditingColorId(editingColorId === acc.id ? null : acc.id) }}
+                    title="Change color"
+                    className="block"
+                  >
+                    <AccountTypeBadge type={acc.type} color={acc.color} />
+                  </button>
+                  {editingColorId === acc.id && (
+                    <div
+                      className="absolute top-full left-0 mt-1 z-20 bg-surface border border-border rounded-lg shadow-lg p-2"
+                      style={{ width: 148 }}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                        {ACCENT_COLORS.map(c => (
+                          <button
+                            key={c}
+                            onClick={() => updateColorMut.mutate({ id: acc.id, color: c })}
+                            title={c}
+                            style={{
+                              width: 28, height: 28,
+                              backgroundColor: c,
+                              borderRadius: 6,
+                              outline: c === acc.color ? `2px solid ${c}` : '2px solid transparent',
+                              outlineOffset: 2,
+                              flexShrink: 0,
+                              transition: 'transform 0.1s',
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   {editingId === acc.id ? (
                     <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>

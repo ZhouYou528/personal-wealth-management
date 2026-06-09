@@ -204,33 +204,6 @@ app.get('/broker-accounts', async (c) => {
   }
 })
 
-// ── Link / unlink a broker account to a D1 account ────────────
-
-app.post(
-  '/link',
-  zValidator('json', z.object({
-    accountId: z.string().min(1),        // D1 account id
-    snapAccountId: z.string().min(1),    // SnapTrade broker account id
-  })),
-  async (c) => {
-    const { accountId, snapAccountId } = c.req.valid('json')
-    await c.env.DB
-      .prepare('UPDATE accounts SET snaptrade_account_id = ? WHERE id = ?')
-      .bind(snapAccountId, accountId)
-      .run()
-    return c.json({ ok: true })
-  },
-)
-
-app.delete('/link/:accountId', async (c) => {
-  const accountId = c.req.param('accountId')
-  await c.env.DB
-    .prepare('UPDATE accounts SET snaptrade_account_id = NULL WHERE id = ?')
-    .bind(accountId)
-    .run()
-  return c.json({ ok: true })
-})
-
 // ── Import accounts after OAuth ───────────────────────────────
 
 const ACCOUNT_TYPE_MAP: Record<string, string> = {
@@ -270,8 +243,7 @@ app.post(
   zValidator('json', z.object({
     accounts: z.array(z.object({
       snapAccountId: z.string(),
-      action: z.enum(['create', 'link', 'skip']),
-      d1AccountId: z.string().optional(),  // for 'link'
+      action: z.enum(['create', 'skip']),
       name: z.string().optional(),          // for 'create'
       institution: z.string().optional(),
       accountType: z.string().optional(),
@@ -292,13 +264,7 @@ app.post(
         const snapAcc = snapById[item.snapAccountId]
         if (!snapAcc) continue
 
-        if (item.action === 'link' && item.d1AccountId) {
-          await c.env.DB
-            .prepare('UPDATE accounts SET snaptrade_account_id = ? WHERE id = ?')
-            .bind(item.snapAccountId, item.d1AccountId)
-            .run()
-          results.push({ snapAccountId: item.snapAccountId, d1AccountId: item.d1AccountId, action: 'linked' })
-        } else if (item.action === 'create') {
+        if (item.action === 'create') {
           const institution = item.institution ?? snapAcc.institution_name ?? ''
           const name = item.name ?? snapAcc.name ?? institution
           const accountType = item.accountType ?? mapAccountType(snapAcc.meta?.type)

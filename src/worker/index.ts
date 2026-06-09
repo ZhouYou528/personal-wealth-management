@@ -77,6 +77,7 @@ export default {
 }
 
 // Shared: fetch all prices and compute per-account values.
+// For SnapTrade-linked accounts, equity/cash positions come from SnapTrade; D1 is options-only.
 async function fetchPortfolioValues(env: Env): Promise<{
   byAccount: Record<string, number>
   aggregate: number
@@ -84,14 +85,29 @@ async function fetchPortfolioValues(env: Env): Promise<{
   const { computeHoldings } = await import('./lib/positions')
   const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
 
+  // Determine which D1 accounts are SnapTrade-linked
+  const allAccounts = await env.DB
+    .prepare('SELECT id, snaptrade_account_id FROM accounts')
+    .all<{ id: string; snaptrade_account_id: string | null }>()
+  const reverseMap = new Map<string, string>() // snap_account_id → d1_id
+  const linkedD1Ids = new Set<string>()
+  for (const a of allAccounts.results ?? []) {
+    if (a.snaptrade_account_id) {
+      reverseMap.set(a.snaptrade_account_id, a.id)
+      linkedD1Ids.add(a.id)
+    }
+  }
+
   const [transactions, marks] = await Promise.all([
     q.getAllTransactionsForHoldings(env.DB),
     q.getHoldingMarks(env.DB),
   ])
-  const holdings = computeHoldings(transactions)
+
+  // Live accounts are 100% SnapTrade — exclude all their D1 holdings from NAV
+  const d1Holdings = computeHoldings(transactions).filter(h => !linkedD1Ids.has(h.account_id))
 
   const symbolsToFetch = new Set<string>()
-  for (const h of holdings) {
+  for (const h of d1Holdings) {
     if (h.symbol === 'CASH' || h.kind === 'option') continue
     if (marks[h.id] != null) continue
     symbolsToFetch.add(h.symbol)
@@ -110,7 +126,7 @@ async function fetchPortfolioValues(env: Env): Promise<{
     }
   }))
 
-  function priceFor(h: typeof holdings[number]): number {
+  function priceFor(h: ReturnType<typeof computeHoldings>[number]): number {
     if (h.symbol === 'CASH') return 1
     if (marks[h.id] != null) return marks[h.id]
     return priceMap[h.symbol] ?? h.cost
@@ -118,11 +134,65 @@ async function fetchPortfolioValues(env: Env): Promise<{
 
   const byAccount: Record<string, number> = {}
   let aggregate = 0
-  for (const h of holdings) {
+  for (const h of d1Holdings) {
     const v = h.qty * priceFor(h) * (h.multiplier ?? 1)
     byAccount[h.account_id] = (byAccount[h.account_id] ?? 0) + v
     aggregate += v
   }
+
+  // ── SnapTrade live account positions ──────────────────────────
+  if (reverseMap.size > 0) {
+    const snapUser = await env.DB
+      .prepare('SELECT snaptrade_user_id, user_secret FROM snaptrade_users WHERE id = ?')
+      .bind('singleton')
+      .first<{ snaptrade_user_id: string; user_secret: string }>()
+
+    if (snapUser) {
+      const { createSnapClient } = await import('./lib/snaptrade')
+      const snap = createSnapClient(env.SNAPTRADE_CLIENT_ID, env.SNAPTRADE_CONSUMER_KEY)
+      const userAuth = { userId: snapUser.snaptrade_user_id, userSecret: snapUser.user_secret }
+
+      for (const [snapAccId, d1Id] of reverseMap) {
+        try {
+          const [unified, balances] = await Promise.all([
+            snap.getAccountAllPositions(userAuth, snapAccId),
+            snap.getAccountBalances(userAuth, snapAccId),
+          ])
+
+          let snapValue = 0
+          for (const pos of unified) {
+            const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
+            if (instrKind === 'option') continue  // already counted from D1
+            const qty = Number(pos.units) || 0
+            const sym = pos.instrument?.symbol
+            if (!sym || !qty) continue
+            // Prefer broker's live price; fall back to KV cache then Finnhub
+            let price: number | null = pos.price != null ? Number(pos.price) : null
+            if (price == null) {
+              const cached = await env.PRICE_CACHE.get(`quote:${sym}`, 'json') as { price: number } | null
+              price = cached?.price ?? null
+              if (price == null) {
+                const fetched = isCrypto(sym)
+                  ? await fetchCoinGeckoQuote(sym, env.COINGECKO_KEY)
+                  : await fetchFinnhubQuote(sym, env.FINNHUB_KEY)
+                price = fetched?.price ?? null
+              }
+            }
+            if (price != null) snapValue += qty * price
+          }
+          for (const bal of balances) {
+            if ((bal.cash ?? 0) > 0) snapValue += bal.cash
+          }
+
+          byAccount[d1Id] = (byAccount[d1Id] ?? 0) + snapValue
+          aggregate += snapValue
+        } catch (e) {
+          console.error(`SnapTrade NAV fetch failed for ${snapAccId}:`, e)
+        }
+      }
+    }
+  }
+
   return { byAccount, aggregate }
 }
 

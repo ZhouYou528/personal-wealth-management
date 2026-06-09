@@ -233,12 +233,14 @@ export function createSnapClient(clientId: string, consumerKey: string) {
       call<SnapPosition[]>(`/accounts/${snapAccountId}/positions`, { userAuth }),
 
     getAccountAllPositions: async (userAuth: SnapUser, snapAccountId: string) => {
-      const res = await call<SnapAllPositionsResponse>(`/accounts/${snapAccountId}/positions/all`, { userAuth })
-      return res.results ?? []
+      const res = await call<SnapAllPositionsResponse | null>(`/accounts/${snapAccountId}/positions/all`, { userAuth })
+      return res?.results ?? []
     },
 
-    getAccountBalances: (userAuth: SnapUser, snapAccountId: string) =>
-      call<SnapBalance[]>(`/accounts/${snapAccountId}/balances`, { userAuth }),
+    getAccountBalances: async (userAuth: SnapUser, snapAccountId: string) => {
+      const res = await call<SnapBalance[] | null>(`/accounts/${snapAccountId}/balances`, { userAuth })
+      return res ?? []
+    },
 
     getActivities: (userAuth: SnapUser, startDate?: string, endDate?: string, accounts?: string) =>
       call<SnapActivity[]>('/activities', {
