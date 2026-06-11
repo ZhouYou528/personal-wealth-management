@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS credit_cards (
   bureau              TEXT NOT NULL DEFAULT 'Experian', -- Experian | Equifax | TransUnion
   hard_pull           INTEGER NOT NULL DEFAULT 1,
   bonus               INTEGER NOT NULL DEFAULT 0,       -- points
-  currency            TEXT NOT NULL DEFAULT 'UR',       -- MR/UR/C1/TYP/Aeroplan/Avion/ScenePlus/Cash
+  currency            TEXT NOT NULL DEFAULT 'UR',       -- MR/UR/C1/TYP/Aeroplan/Avion/ScenePlus/Bonvoy/Cash
   bonus_met           INTEGER NOT NULL DEFAULT 0,
   bonus_met_date      TEXT,
   min_spend_req       REAL NOT NULL DEFAULT 0,

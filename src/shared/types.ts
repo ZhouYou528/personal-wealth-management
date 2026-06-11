@@ -167,7 +167,7 @@ export interface ApiError {
 
 export type CreditCardMarket   = 'US' | 'CA'
 export type CreditCardStatus   = 'active' | 'cancelled'
-export type CreditCardCurrency = 'MR' | 'UR' | 'C1' | 'TYP' | 'Aeroplan' | 'Avion' | 'ScenePlus' | 'Cash'
+export type CreditCardCurrency = 'MR' | 'UR' | 'C1' | 'TYP' | 'Aeroplan' | 'Avion' | 'ScenePlus' | 'Bonvoy' | 'Cash'
 export type CreditCardNetwork  = 'Visa' | 'Mastercard' | 'Amex'
 export type CreditCardBureau   = 'Experian' | 'Equifax' | 'TransUnion'
 

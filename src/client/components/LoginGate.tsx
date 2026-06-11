@@ -3,6 +3,11 @@ import { Lock } from 'lucide-react'
 import { Button } from './ui/button'
 import { useStore } from '@/lib/store'
 
+async function hashPassword(password: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 export function LoginGate() {
   const [value, setValue] = useState('')
   const [error, setError] = useState('')
@@ -18,8 +23,9 @@ export function LoginGate() {
     setError('')
 
     try {
+      const hashed = await hashPassword(key)
       const res = await fetch('/api/accounts', {
-        headers: { Authorization: `Bearer ${key}` },
+        headers: { Authorization: `Bearer ${hashed}` },
       })
 
       if (res.status === 401) {
@@ -29,7 +35,7 @@ export function LoginGate() {
       }
 
       if (res.ok) {
-        setApiSecret(key)
+        setApiSecret(hashed)
         return
       }
 

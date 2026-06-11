@@ -23,6 +23,13 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
+// Clients send SHA-256(password) so the plaintext never travels over the network.
+// The worker derives the expected token the same way from APP_SECRET.
+async function hashSecret(secret: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 const api = new Hono<{ Bindings: Env }>()
   .use('*', cors())
   // Auth guard — if APP_SECRET is set, every /api/* request must include
@@ -31,7 +38,9 @@ const api = new Hono<{ Bindings: Env }>()
     const secret = c.env.APP_SECRET
     if (!secret) return next()
     const auth = c.req.header('Authorization') ?? ''
-    if (!auth.startsWith('Bearer ') || !timingSafeEqual(auth.slice(7), secret)) {
+    if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401)
+    const expectedToken = await hashSecret(secret)
+    if (!timingSafeEqual(auth.slice(7), expectedToken)) {
       return c.json({ error: 'Unauthorized' }, 401)
     }
     return next()

@@ -18,7 +18,7 @@ const CardSchema = z.object({
   bureau:              z.enum(['Experian', 'Equifax', 'TransUnion']).default('Experian'),
   hard_pull:           z.number().int().min(0).max(1).default(1),
   bonus:               z.number().int().min(0).default(0),
-  currency:            z.enum(['MR', 'UR', 'C1', 'TYP', 'Aeroplan', 'Avion', 'ScenePlus', 'Cash']).default('UR'),
+  currency:            z.enum(['MR', 'UR', 'C1', 'TYP', 'Aeroplan', 'Avion', 'ScenePlus', 'Bonvoy', 'Cash']).default('UR'),
   bonus_met:           z.number().int().min(0).max(1).default(0),
   bonus_met_date:      z.string().nullable().optional(),
   min_spend_req:       z.number().min(0).default(0),

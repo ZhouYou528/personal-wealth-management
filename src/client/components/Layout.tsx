@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, Layers, List, Eye, EyeOff, Target, Plus,
   RefreshCw, X, Wallet, BookOpen, Upload, Repeat, BarChart3, Scale,
-  Moon, Sun, MoreHorizontal, ChevronRight, CreditCard,
+  Moon, Sun, MoreHorizontal, ChevronRight, CreditCard, Download,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/lib/store'
@@ -10,6 +10,7 @@ import { Button } from './ui/button'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { holdings as holdingsApi, accounts as accountsApi, nav } from '@/lib/api'
+import { exportToSpreadsheet } from '@/lib/export'
 import { STALE } from '@/lib/cache'
 
 const PRIMARY_NAV = [
@@ -196,6 +197,17 @@ export function Layout() {
   const qc = useQueryClient()
   const isFetching = useIsFetching()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  async function handleExport() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportToSpreadsheet()
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // Prefetch the three most expensive queries as soon as the layout shell mounts.
   // This runs in parallel with the page render so Dashboard data is often ready
@@ -261,6 +273,16 @@ export function Layout() {
                 {privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
               </Button>
             </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleExport}
+              title="Export to spreadsheet"
+              disabled={exporting}
+            >
+              <Download size={14} className={exporting ? 'animate-pulse' : ''} />
+            </Button>
 
             <Button
               size="sm"

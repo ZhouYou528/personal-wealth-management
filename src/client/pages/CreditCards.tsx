@@ -10,11 +10,11 @@ import type { CreditCard } from '@shared/types'
 // ── CPP (cents per point) valuation ──────────────────────────
 const CPP: Record<string, number> = {
   MR: 0.018, UR: 0.02, C1: 0.017, TYP: 0.017,
-  Aeroplan: 0.015, Avion: 0.012, ScenePlus: 0.01, Cash: 0.01,
+  Aeroplan: 0.015, Avion: 0.012, ScenePlus: 0.01, Bonvoy: 0.008, Cash: 0.01,
 }
 const CPP_LABEL: Record<string, string> = {
   MR: 'Amex MR', UR: 'Chase UR', C1: 'Capital One', TYP: 'Citi TYP',
-  Aeroplan: 'Aeroplan', Avion: 'RBC Avion', ScenePlus: 'Scene+', Cash: 'Cash Back',
+  Aeroplan: 'Aeroplan', Avion: 'RBC Avion', ScenePlus: 'Scene+', Bonvoy: 'Marriott Bonvoy', Cash: 'Cash Back',
 }
 
 const PALETTES: [string, string, string][] = [
