@@ -717,54 +717,70 @@ function MoverColumn({ title, icon, list, onPick }: {
 
 // ── Market Sentiment row ──────────────────────────────────────────
 // Two stat cards: VIX (volatility, lower is calmer) and CNN Fear & Greed
-// Index (0-100, higher is greedier). Cached 15 min server-side.
+// Index (0-100, higher is greedier). Each card shows a linear zone bar
+// (Direction A from the design spec) — active zone solid, others fade.
+// Cached 15 min server-side.
 
-const VIX_TONE = (v: number): 'up' | 'neutral' | 'warn' | 'down' => {
-  if (v < 15) return 'up'
-  if (v < 20) return 'neutral'
-  if (v < 30) return 'warn'
-  return 'down'
+interface Zone {
+  from: number
+  to: number
+  color: string  // CSS color (hex)
+  name: string
+  tone: 'ink' | 'amber' | 'red'  // hero number color when this zone is active
 }
 
-// F&G: greed isn't "bad," it just describes the market. Color reflects the
-// emotional zone (red = fear, green = greed), not investment advice.
-const FG_TONE = (v: number): 'down' | 'warn' | 'neutral' | 'up' => {
-  if (v < 25) return 'down'
-  if (v < 45) return 'warn'
-  if (v < 55) return 'neutral'
-  return 'up'
+const VIX_ZONES: Zone[] = [
+  { from: 0,  to: 12, color: '#16b877', name: 'Calm',     tone: 'ink'   },
+  { from: 12, to: 20, color: '#3aa98a', name: 'Normal',   tone: 'ink'   },
+  { from: 20, to: 30, color: '#f59e0b', name: 'Elevated', tone: 'amber' },
+  { from: 30, to: 40, color: '#e5484d', name: 'High',     tone: 'red'   },
+]
+const VIX_MIN = 0
+const VIX_MAX = 40
+
+const FG_ZONES: Zone[] = [
+  { from: 0,   to: 25,  color: '#e5484d', name: 'Extreme Fear',  tone: 'red'   },
+  { from: 25,  to: 45,  color: '#f59e0b', name: 'Fear',          tone: 'amber' },
+  { from: 45,  to: 55,  color: '#d9a521', name: 'Neutral',       tone: 'ink'   },
+  { from: 55,  to: 75,  color: '#4cb87a', name: 'Greed',         tone: 'ink'   },
+  { from: 75,  to: 100, color: '#16b877', name: 'Extreme Greed', tone: 'ink'   },
+]
+const FG_MIN = 0
+const FG_MAX = 100
+
+function getActiveZone(value: number, zones: Zone[]): Zone {
+  return zones.find(z => value >= z.from && value < z.to) ?? zones[zones.length - 1]
 }
 
-const TONE_TEXT: Record<string, string> = {
-  up:      'text-up',
-  warn:    'text-warn',
-  down:    'text-down',
-  neutral: 'text-text-2',
+function frac(value: number, min: number, max: number): number {
+  return Math.max(0, Math.min(1, (value - min) / (max - min)))
 }
-const TONE_CHIP: Record<string, string> = {
-  up:      'bg-up/12 text-up',
-  warn:    'bg-warn/15 text-warn',
-  down:    'bg-down/15 text-down',
-  neutral: 'bg-surface-2 text-text-2',
+
+const NUMBER_TONE_CLASS: Record<Zone['tone'], string> = {
+  ink:   'text-text',
+  amber: 'text-warn',
+  red:   'text-down',
 }
 
 function MarketSentimentRow() {
   const { data, isLoading } = useQuery({
     queryKey: ['sentiment'],
     queryFn: sentimentApi.get,
-    staleTime: 5 * 60_000,         // re-poll at most every 5 min on this client
-    refetchInterval: 15 * 60_000,  // background refresh every 15 min
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
     refetchOnWindowFocus: false,
   })
 
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4">
       <SentimentCard
         title="VIX"
         sub="Volatility Index"
         loading={isLoading}
         metric={data?.vix}
-        tone={data?.vix ? VIX_TONE(data.vix.value) : 'neutral'}
+        zones={VIX_ZONES}
+        min={VIX_MIN}
+        max={VIX_MAX}
         precision={2}
         deltaSuffix="today"
       />
@@ -773,7 +789,9 @@ function MarketSentimentRow() {
         sub="CNN Index · 0–100"
         loading={isLoading}
         metric={data?.fearGreed}
-        tone={data?.fearGreed ? FG_TONE(data.fearGreed.value) : 'neutral'}
+        zones={FG_ZONES}
+        min={FG_MIN}
+        max={FG_MAX}
         precision={0}
         deltaSuffix="vs prev close"
       />
@@ -781,47 +799,99 @@ function MarketSentimentRow() {
   )
 }
 
-function SentimentCard({ title, sub, loading, metric, tone, precision, deltaSuffix }: {
+// Linear zone scale: each zone's segment grows proportionally; active zone is
+// solid, others fade to 20% via color-mix. Marker is a dark vertical pill
+// positioned at the value's fractional location with a white halo so it reads
+// over either segment color.
+function LinearScale({ value, min, max, zones }: {
+  value: number
+  min: number
+  max: number
+  zones: Zone[]
+}) {
+  const active = getActiveZone(value, zones)
+  const pos = frac(value, min, max) * 100
+  return (
+    <div className="relative h-[9px] flex gap-[3px] mt-4 sm:mt-5">
+      {zones.map((z, i) => {
+        const isActive = z === active
+        const w = ((z.to - z.from) / (max - min)) * 100
+        return (
+          <div
+            key={i}
+            className="h-[9px] rounded-full"
+            style={{
+              flexGrow: w,
+              flexBasis: 0,
+              background: isActive
+                ? z.color
+                : `color-mix(in oklab, ${z.color} 20%, transparent)`,
+            }}
+          />
+        )
+      })}
+      <div
+        className="absolute top-1/2 w-[5px] h-[20px] rounded-full bg-text shadow-[0_0_0_3px_hsl(var(--surface)),0_2px_6px_rgba(16,20,24,0.22)]"
+        style={{
+          left: `${pos}%`,
+          transform: 'translate(-50%, -50%)',
+        }}
+      />
+    </div>
+  )
+}
+
+function SentimentCard({ title, sub, loading, metric, zones, min, max, precision, deltaSuffix }: {
   title: string
   sub: string
   loading: boolean
   metric: { value: number; change: number; label: string } | null | undefined
-  tone: 'up' | 'down' | 'warn' | 'neutral'
+  zones: Zone[]
+  min: number
+  max: number
   precision: number
   deltaSuffix: string
 }) {
+  const active = metric ? getActiveZone(metric.value, zones) : null
+
   return (
-    <div className="sm:bg-surface sm:rounded-2xl sm:shadow-md sm:dark:shadow-none sm:border sm:border-transparent sm:dark:border-border px-0 sm:px-5 py-0 sm:py-4 min-w-0">
-      <div className="flex items-baseline justify-between mb-1 min-w-0">
+    <div className="sm:bg-surface sm:rounded-2xl sm:shadow-md sm:dark:shadow-none sm:border sm:border-transparent sm:dark:border-border px-0 sm:px-6 py-0 sm:py-5 min-w-0">
+      <div className="flex items-baseline justify-between gap-2 min-w-0">
         <p className="text-micro text-text-3 uppercase tracking-widest">{title}</p>
-        <p className="text-[10px] text-text-3 truncate ml-2 min-w-0">{sub}</p>
+        <p className="text-[10px] text-text-3 truncate">{sub}</p>
       </div>
 
       {loading ? (
-        <div className="h-[44px] sm:h-[52px] bg-surface-2 rounded animate-pulse" />
-      ) : metric == null ? (
+        <div className="h-[38px] sm:h-[54px] bg-surface-2 rounded animate-pulse mt-2" />
+      ) : metric == null || active == null ? (
         <p className="text-small text-text-3 mt-2">Unavailable</p>
       ) : (
         <>
           <p className={cn(
-            'tabular font-bold text-[30px] sm:text-[36px] leading-none tracking-tight mt-0.5',
-            TONE_TEXT[tone]
+            'tabular font-bold text-[30px] sm:text-[44px] leading-none tracking-tight mt-2 sm:mt-3',
+            NUMBER_TONE_CLASS[active.tone]
           )}>
             {metric.value.toFixed(precision)}
           </p>
-          <div className="flex items-center justify-between mt-2">
-            <span className={cn(
-              'inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold',
-              TONE_CHIP[tone]
-            )}>
-              {metric.label}
+
+          <LinearScale value={metric.value} min={min} max={max} zones={zones} />
+
+          <div className="flex items-center justify-between gap-2 mt-3 sm:mt-4 min-w-0">
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap flex-shrink-0"
+              style={{
+                background: `color-mix(in oklab, ${active.color} 14%, transparent)`,
+                color: `color-mix(in oklab, ${active.color} 78%, black)`,
+              }}
+            >
+              {active.name}
             </span>
             {Math.abs(metric.change) >= 0.01 && (
-              <span className="flex items-center gap-0.5 text-[11px] text-text-3">
+              <span className="flex items-center gap-0.5 text-[11px] text-text-3 whitespace-nowrap">
                 {metric.change >= 0
-                  ? <TrendingUp size={11} className="text-up" />
-                  : <TrendingDown size={11} className="text-down" />}
-                <span className={cn('tabular', metric.change >= 0 ? 'text-up' : 'text-down')}>
+                  ? <TrendingUp size={11} className="text-up flex-shrink-0" />
+                  : <TrendingDown size={11} className="text-down flex-shrink-0" />}
+                <span className={cn('tabular font-medium', metric.change >= 0 ? 'text-up' : 'text-down')}>
                   {metric.change >= 0 ? '+' : ''}{metric.change.toFixed(precision)}
                 </span>
                 <span>{deltaSuffix}</span>
