@@ -9,10 +9,11 @@
 //
 // Each Flex Query yields a single XML containing multiple FlexStatement blocks
 // (one per IBKR account). We persist parsed rows into the unified `transactions`
-// + `snaptrade_positions` + `snaptrade_balances` tables with source='ibkr_flex'.
+// + `broker_positions` + `broker_balances` tables with source='ibkr_flex'.
 
 import { XMLParser } from 'fast-xml-parser'
 import type { TxType } from '@shared/types'
+import { isEtfSymbol } from '../../shared/etf-list'
 
 const SUBMIT_URL = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest'
 
@@ -26,6 +27,7 @@ export interface IbkrSyncResult {
   cash_inserted:          number
   positions_upserted:     number
   positions_culled:       number
+  balances_upserted:      number
   accounts_synced:        string[]
   errors:                 string[]
 }
@@ -98,6 +100,13 @@ interface ParsedStatement {
   cashTxs:          RawCashTx[]
   openPositions:    RawPosition[]
   optionEAEs:       RawOptionEAE[]
+  cashBalances:     RawCashBalance[]
+}
+
+interface RawCashBalance {
+  accountId:  string
+  currency:   string         // 'USD', 'CAD', 'BASE_SUMMARY' (skip), etc.
+  endingCash: number         // closing balance for the period
 }
 
 interface RawTrade {
@@ -188,6 +197,7 @@ export function parseFlexXml(xml: string): ParsedFlex {
     cashTxs:       arr(fs.CashTransactions?.CashTransaction).map(normCashTx).filter((t: RawCashTx | null): t is RawCashTx => t !== null),
     openPositions: arr(fs.OpenPositions?.OpenPosition).map(normPosition).filter((p: RawPosition | null): p is RawPosition => p !== null),
     optionEAEs:    arr(fs.OptionEAE?.OptionEAE).map(normEAE).filter((e: RawOptionEAE | null): e is RawOptionEAE => e !== null),
+    cashBalances:  arr(fs.CashReport?.CashReportCurrency).map(normCashBalance).filter((b: RawCashBalance | null): b is RawCashBalance => b !== null),
   }))
 
   return { statements }
@@ -277,6 +287,23 @@ function normEAE(e: any): RawOptionEAE | null {
   }
 }
 
+function normCashBalance(b: any): RawCashBalance | null {
+  if (!b?.currency) return null
+  const currency = String(b.currency).toUpperCase()
+  // BASE_SUMMARY rolls everything into the base currency — we want per-currency rows
+  if (currency === 'BASE_SUMMARY' || currency === 'BASE') return null
+  // Prefer endingCash; fall back to endingSettledCash if absent
+  const ending = b.endingCash != null ? num(b.endingCash)
+              : b.endingSettledCash != null ? num(b.endingSettledCash)
+              : null
+  if (ending == null) return null
+  return {
+    accountId:  String(b.accountId ?? ''),
+    currency,
+    endingCash: ending,
+  }
+}
+
 function num(v: unknown): number {
   if (v == null) return 0
   if (typeof v === 'number') return v
@@ -318,6 +345,7 @@ export async function persistFlexResults(
   const result: IbkrSyncResult = {
     trades_inserted: 0, cash_inserted: 0,
     positions_upserted: 0, positions_culled: 0,
+    balances_upserted: 0,
     accounts_synced: [], errors: [],
   }
   const nowISO = new Date().toISOString()
@@ -360,7 +388,7 @@ export async function persistFlexResults(
           d1Id,
           baseType,
           sym,
-          isOption ? 'option' : assetKindOf(t.assetCategory),
+          isOption ? 'option' : assetKindOf(t.assetCategory, sym),
           Math.abs(t.quantity) || null,
           t.tradePrice || null,
           total,
@@ -420,10 +448,10 @@ export async function persistFlexResults(
       }
     }
 
-    // ── Open positions → snaptrade_positions (table name kept for unified read path) ─
+    // ── Open positions → broker_positions (table name kept for unified read path) ─
     if (fs.openPositions.length > 0) {
       const upsert = db.prepare(`
-        INSERT INTO snaptrade_positions (
+        INSERT INTO broker_positions (
           account_id, symbol, option_type, strike, expiry, kind, qty, avg_cost,
           market_price, currency, underlying, multiplier, synced_at
         )
@@ -452,7 +480,7 @@ export async function persistFlexResults(
           optType,
           isOption ? (p.strike ?? 0) : 0,
           isOption ? (p.expiry ?? '') : '',
-          isOption ? 'option' : assetKindOf(p.assetCategory),
+          isOption ? 'option' : assetKindOf(p.assetCategory, sym),
           p.position,
           avgCost,
           p.markPrice ?? null,
@@ -470,23 +498,48 @@ export async function persistFlexResults(
 
     // Cull stale positions for the accounts we just synced
     const culled = await db
-      .prepare('DELETE FROM snaptrade_positions WHERE account_id = ? AND synced_at < ?')
+      .prepare('DELETE FROM broker_positions WHERE account_id = ? AND synced_at < ?')
       .bind(d1Id, nowISO).run()
     result.positions_culled += culled.meta.changes ?? 0
+
+    // ── Cash balances → broker_balances (per currency) ───────────
+    // Upsert per (account, currency); cull stale currencies the user no
+    // longer holds (e.g. they converted all CAD → USD).
+    if (fs.cashBalances.length > 0) {
+      const upsert = db.prepare(`
+        INSERT INTO broker_balances (account_id, currency, cash, buying_power, synced_at)
+        VALUES (?,?,?,NULL,?)
+        ON CONFLICT(account_id, currency) DO UPDATE SET
+          cash      = excluded.cash,
+          synced_at = excluded.synced_at
+      `)
+      const batch: D1PreparedStatement[] = []
+      for (const b of fs.cashBalances) {
+        batch.push(upsert.bind(d1Id, b.currency, b.endingCash, nowISO))
+      }
+      const r = await db.batch(batch)
+      result.balances_upserted += r.length
+    }
+    // Cull stale balance rows for currencies not in this sync's report
+    await db
+      .prepare('DELETE FROM broker_balances WHERE account_id = ? AND synced_at < ?')
+      .bind(d1Id, nowISO).run()
   }
 
   return result
 }
 
-function assetKindOf(cat: string | undefined): string {
+function assetKindOf(cat: string | undefined, symbol?: string | null): string {
   const c = (cat ?? '').toUpperCase()
   if (c.includes('OPT')) return 'option'
-  if (c.includes('ETF')) return 'etf'
   if (c.includes('FUND')) return 'mutual_fund'
   if (c.includes('CRYPTO')) return 'crypto'
   // IBKR's "CASH" asset class means forex / currency conversions
   // (e.g. USD.CAD pairs), NOT crypto.
   if (c.includes('CASH')) return 'cash'
+  // IBKR lumps ETFs under STK in assetCategory — fall back to the symbol
+  // whitelist to distinguish ETFs from individual stocks.
+  if (c.includes('ETF') || isEtfSymbol(symbol)) return 'etf'
   return 'stock'
 }
 
@@ -506,7 +559,7 @@ export async function syncIbkrFlex(
   if (Object.keys(accountMap).length === 0) {
     return {
       trades_inserted: 0, cash_inserted: 0, positions_upserted: 0,
-      positions_culled: 0, accounts_synced: [],
+      positions_culled: 0, balances_upserted: 0, accounts_synced: [],
       errors: ['No IBKR accounts in D1 (expected accounts.institution = "Interactive Brokers" with number = U...)'],
     }
   }

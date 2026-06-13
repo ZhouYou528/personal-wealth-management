@@ -2,8 +2,8 @@
 //
 // Responsibilities:
 //   - syncActivities  → insert new transactions (dedup by source+external_id)
-//   - syncPositions   → upsert snaptrade_positions, cull stale rows
-//   - syncBalances    → upsert snaptrade_balances
+//   - syncPositions   → upsert broker_positions, cull stale rows
+//   - syncBalances    → upsert broker_balances
 //   - syncAccount     → all three, used by the admin/refresh endpoint
 //   - REFRESH_DEBOUNCE_S enforced via accounts.last_synced_at
 //
@@ -164,7 +164,7 @@ export async function syncPositions(
   }
 
   const upsert = db.prepare(`
-    INSERT INTO snaptrade_positions (
+    INSERT INTO broker_positions (
       account_id, symbol, option_type, strike, expiry, kind, qty, avg_cost,
       market_price, currency, underlying, multiplier, synced_at
     )
@@ -224,7 +224,7 @@ export async function syncPositions(
 
   // Cull anything not touched this run (closed positions).
   const culled = await db
-    .prepare('DELETE FROM snaptrade_positions WHERE account_id = ? AND synced_at < ?')
+    .prepare('DELETE FROM broker_positions WHERE account_id = ? AND synced_at < ?')
     .bind(d1AccountId, nowISO)
     .run()
 
@@ -251,7 +251,7 @@ export async function syncBalances(
   }
 
   const upsert = db.prepare(`
-    INSERT INTO snaptrade_balances (account_id, currency, cash, buying_power, synced_at)
+    INSERT INTO broker_balances (account_id, currency, cash, buying_power, synced_at)
     VALUES (?,?,?,?,?)
     ON CONFLICT(account_id, currency) DO UPDATE SET
       cash         = excluded.cash,

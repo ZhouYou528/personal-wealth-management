@@ -791,10 +791,10 @@ function SentimentCard({ title, sub, loading, metric, tone, precision, deltaSuff
   deltaSuffix: string
 }) {
   return (
-    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-5 py-3.5 sm:py-4 min-w-0">
-      <div className="flex items-baseline justify-between mb-1">
+    <div className="sm:bg-surface sm:rounded-2xl sm:shadow-md sm:dark:shadow-none sm:border sm:border-transparent sm:dark:border-border px-0 sm:px-5 py-0 sm:py-4 min-w-0">
+      <div className="flex items-baseline justify-between mb-1 min-w-0">
         <p className="text-micro text-text-3 uppercase tracking-widest">{title}</p>
-        <p className="text-[10px] text-text-3 truncate ml-2">{sub}</p>
+        <p className="text-[10px] text-text-3 truncate ml-2 min-w-0">{sub}</p>
       </div>
 
       {loading ? (

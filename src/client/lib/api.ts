@@ -264,6 +264,7 @@ export const ibkrFlex = {
     | { rateLimited: true; retryAfter: number }
     | { rateLimited: false; trades_inserted: number; cash_inserted: number;
         positions_upserted: number; positions_culled: number;
+        balances_upserted: number;
         accounts_synced: string[]; errors: string[] }
   > => {
     const { apiSecret } = useStore.getState()
@@ -279,6 +280,7 @@ export const ibkrFlex = {
     if (!res.ok) throw new Error(body.error ?? 'IBKR Flex sync failed')
     return { rateLimited: false, ...(body as Omit<{ trades_inserted: number; cash_inserted: number;
         positions_upserted: number; positions_culled: number;
+        balances_upserted: number;
         accounts_synced: string[]; errors: string[] }, never>) }
   },
 }

@@ -90,14 +90,21 @@ app.get('/', async (c) => {
 
     // ── D1 queries in parallel ───────────────────────────────────
     // "Broker-managed" = the account has positions persisted in
-    // snaptrade_positions (whether the source is SnapTrade or IBKR Flex).
+    // broker_positions (whether the source is SnapTrade or IBKR Flex).
     // We use that as the trigger to read positions from the snapshot rather
     // than computing from transactions.
     const [allAccountsResult, marks, transactions, brokerManagedRows] = await Promise.all([
       c.env.DB.prepare('SELECT id, snaptrade_account_id FROM accounts').all<{ id: string; snaptrade_account_id: string | null }>(),
       q.getHoldingMarks(c.env.DB),
       q.getAllTransactionsForHoldings(c.env.DB, accountId),
-      c.env.DB.prepare('SELECT DISTINCT account_id FROM snaptrade_positions').all<{ account_id: string }>(),
+      // Accounts with rows in EITHER broker_positions or broker_balances are
+      // broker-managed (e.g. a cash-only IBKR account has no positions but
+      // has a balance row — it still needs to read from the snapshot path).
+      c.env.DB.prepare(
+        `SELECT account_id FROM broker_positions
+         UNION
+         SELECT account_id FROM broker_balances`
+      ).all<{ account_id: string }>(),
     ])
     const tD1 = Date.now() - t0
 
@@ -123,7 +130,7 @@ app.get('/', async (c) => {
     )
 
     // ── SnapTrade holdings: read from persisted snapshot tables ──
-    // Cron keeps snaptrade_positions/balances fresh; no live SnapTrade calls
+    // Cron keeps broker_positions/balances fresh; no live SnapTrade calls
     // here. Quote freshness is handled by the existing KV quote cache.
     const snapHoldings: Holding[] = []
 
@@ -135,7 +142,7 @@ app.get('/', async (c) => {
         c.env.DB.prepare(
           `SELECT account_id, symbol, option_type, strike, expiry, kind, qty,
                   avg_cost, market_price, currency, underlying, multiplier
-           FROM snaptrade_positions
+           FROM broker_positions
            WHERE account_id IN (${accountFilter.map(() => '?').join(',')})`
         ).bind(...accountFilter).all<{
           account_id: string; symbol: string; option_type: string; strike: number;
@@ -143,7 +150,7 @@ app.get('/', async (c) => {
           market_price: number | null; currency: string; underlying: string | null; multiplier: number;
         }>(),
         c.env.DB.prepare(
-          `SELECT account_id, currency, cash FROM snaptrade_balances
+          `SELECT account_id, currency, cash FROM broker_balances
            WHERE account_id IN (${accountFilter.map(() => '?').join(',')})`
         ).bind(...accountFilter).all<{ account_id: string; currency: string; cash: number }>(),
       ])

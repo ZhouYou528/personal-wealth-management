@@ -118,13 +118,18 @@ async function fetchPortfolioValues(env: Env): Promise<{
   const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
 
   // "Broker-managed" accounts: their holdings come from the persisted
-  // snaptrade_positions/snaptrade_balances tables (sourced by either SnapTrade
+  // broker_positions/broker_balances tables (sourced by either SnapTrade
   // cron or IBKR Flex). D1-computed holdings are skipped for these accounts.
   const [allAccounts, brokerManagedRows] = await Promise.all([
     env.DB.prepare('SELECT id, snaptrade_account_id FROM accounts')
       .all<{ id: string; snaptrade_account_id: string | null }>(),
-    env.DB.prepare('SELECT DISTINCT account_id FROM snaptrade_positions')
-      .all<{ account_id: string }>(),
+    // Union both tables — a cash-only account has no positions but its
+    // broker_balances row still qualifies it as broker-managed.
+    env.DB.prepare(
+      `SELECT account_id FROM broker_positions
+       UNION
+       SELECT account_id FROM broker_balances`
+    ).all<{ account_id: string }>(),
   ])
   const linkedD1Ids = new Set<string>(
     (brokerManagedRows.results ?? []).map(r => r.account_id)
@@ -176,11 +181,11 @@ async function fetchPortfolioValues(env: Env): Promise<{
   }
 
   // ── SnapTrade positions/balances: read from persisted snapshot ─
-  // Cron keeps snaptrade_positions/balances fresh; no SnapTrade roundtrip here.
+  // Cron keeps broker_positions/balances fresh; no SnapTrade roundtrip here.
   if (linkedD1Ids.size > 0) {
     const persistedPositions = await env.DB
       .prepare(`SELECT account_id, symbol, qty, market_price, kind, multiplier
-                FROM snaptrade_positions
+                FROM broker_positions
                 WHERE kind != 'option'`)  // options already counted from D1
       .all<{ account_id: string; symbol: string; qty: number; market_price: number | null; kind: string; multiplier: number }>()
 
@@ -204,7 +209,7 @@ async function fetchPortfolioValues(env: Env): Promise<{
     }
 
     const persistedBalances = await env.DB
-      .prepare('SELECT account_id, cash FROM snaptrade_balances')
+      .prepare('SELECT account_id, cash FROM broker_balances')
       .all<{ account_id: string; cash: number }>()
     for (const b of persistedBalances.results ?? []) {
       if (!linkedD1Ids.has(b.account_id) || b.cash <= 0) continue

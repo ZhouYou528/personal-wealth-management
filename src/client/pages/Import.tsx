@@ -89,14 +89,7 @@ function parseOptionDesc(desc: string): {
   }
 }
 
-const ETF_SYMBOLS = new Set([
-  // US-listed
-  'SPY','QQQ','QQQM','IVV','VOO','VTI','VEA','VWO','GLD','SLV','TLT','HYG','LQD',
-  'ARKK','ARKG','ARKW','XLF','XLE','XLK','XLV','SCHD','VNQ','JEPI','JEPQ','BIL','SGOV',
-  // TSX-listed (Canadian)
-  'XEQT','VEQT','XIC','VFV','VCN','XIU','XGRO','XBAL','VBAL','VGRO',
-  'CBIL','HISA','CASH','QQC','ZSP','ZAG','XAW','VAB','VEE','VIU',
-])
+import { ETF_SYMBOLS } from '@shared/etf-list'
 
 function mapRow(cols: string[]): MappedTx | null {
   if (cols.length < 9) return null
