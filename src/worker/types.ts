@@ -6,6 +6,8 @@ export interface Env {
   COINGECKO_KEY: string
   SNAPTRADE_CLIENT_ID: string
   SNAPTRADE_CONSUMER_KEY: string
+  IBKR_FLEX_TOKEN: string
+  IBKR_FLEX_QUERY_ID: string
   ENVIRONMENT?: string
   APP_SECRET?: string
 }

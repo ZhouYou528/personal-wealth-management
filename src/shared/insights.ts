@@ -30,6 +30,12 @@ const OPTION_TYPES: TxType[] = ['buy_option', 'sell_option']
 const BUY_LIKE:    TxType[] = ['buy', 'buy_crypto', 'transfer_in', 'buy_option']
 const SELL_LIKE:   TxType[] = ['sell', 'sell_crypto', 'sell_option', 'transfer_out']
 
+// SnapTrade-merged option trades arrive as type=buy/sell + kind=option.
+// This helper unifies both forms so FIFO matching and multipliers apply correctly.
+function isOptionTx(tx: Transaction): boolean {
+  return OPTION_TYPES.includes(tx.type) || tx.kind === 'option'
+}
+
 /**
  * FIFO-match sells against buys to compute realized P&L per closed chunk.
  * Each option contract is bucketed by symbol+strike+expiry+type so different
@@ -45,7 +51,9 @@ export function computeRealized(transactions: Transaction[]): RealizedLot[] {
 
   for (const tx of sorted) {
     if (!tx.symbol) continue
-    const isOption = OPTION_TYPES.includes(tx.type)
+    // Cash/forex conversions (e.g. USD.CAD) aren't investments — skip.
+    if (tx.kind === 'cash') continue
+    const isOption = isOptionTx(tx)
     const mult = isOption ? 100 : 1
 
     const key = `${tx.account_id}:${tx.symbol}${isOption
@@ -123,10 +131,15 @@ export function computeOptionsPremium(
 ): PremiumStats {
   let received = 0, paid = 0, ytdReceived = 0, ytdPaid = 0
   for (const tx of transactions) {
-    if (tx.type === 'sell_option') {
+    // Treat both typed forms (sell_option/buy_option) and the SnapTrade-merged
+    // form (type=sell/buy + kind=option) as option premium activity.
+    const isOption = tx.kind === 'option'
+    const isSell = tx.type === 'sell_option' || (tx.type === 'sell' && isOption)
+    const isBuy  = tx.type === 'buy_option'  || (tx.type === 'buy'  && isOption)
+    if (isSell) {
       received += tx.total
       if (tx.tx_date >= yearStart) ytdReceived += tx.total
-    } else if (tx.type === 'buy_option') {
+    } else if (isBuy) {
       paid += tx.total
       if (tx.tx_date >= yearStart) ytdPaid += tx.total
     }

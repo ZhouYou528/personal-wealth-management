@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { Glyph } from '@/components/Glyph'
-import { holdings as holdingsApi, nav, accounts as accountsApi, admin } from '@/lib/api'
+import { holdings as holdingsApi, nav, accounts as accountsApi, admin, sentiment as sentimentApi } from '@/lib/api'
 import { STALE } from '@/lib/cache'
 import { useStore } from '@/lib/store'
 import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral } from '@/lib/utils'
@@ -569,6 +569,9 @@ export function Dashboard() {
 
       </div>
 
+      {/* ── Market sentiment (VIX + Fear & Greed) ─────────── */}
+      <MarketSentimentRow />
+
       {/* ── Bottom row ─────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -708,6 +711,123 @@ function MoverColumn({ title, icon, list, onPick }: {
           </div>
         </button>
       ))}
+    </div>
+  )
+}
+
+// ── Market Sentiment row ──────────────────────────────────────────
+// Two stat cards: VIX (volatility, lower is calmer) and CNN Fear & Greed
+// Index (0-100, higher is greedier). Cached 15 min server-side.
+
+const VIX_TONE = (v: number): 'up' | 'neutral' | 'warn' | 'down' => {
+  if (v < 15) return 'up'
+  if (v < 20) return 'neutral'
+  if (v < 30) return 'warn'
+  return 'down'
+}
+
+// F&G: greed isn't "bad," it just describes the market. Color reflects the
+// emotional zone (red = fear, green = greed), not investment advice.
+const FG_TONE = (v: number): 'down' | 'warn' | 'neutral' | 'up' => {
+  if (v < 25) return 'down'
+  if (v < 45) return 'warn'
+  if (v < 55) return 'neutral'
+  return 'up'
+}
+
+const TONE_TEXT: Record<string, string> = {
+  up:      'text-up',
+  warn:    'text-warn',
+  down:    'text-down',
+  neutral: 'text-text-2',
+}
+const TONE_CHIP: Record<string, string> = {
+  up:      'bg-up/12 text-up',
+  warn:    'bg-warn/15 text-warn',
+  down:    'bg-down/15 text-down',
+  neutral: 'bg-surface-2 text-text-2',
+}
+
+function MarketSentimentRow() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['sentiment'],
+    queryFn: sentimentApi.get,
+    staleTime: 5 * 60_000,         // re-poll at most every 5 min on this client
+    refetchInterval: 15 * 60_000,  // background refresh every 15 min
+    refetchOnWindowFocus: false,
+  })
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <SentimentCard
+        title="VIX"
+        sub="Volatility Index"
+        loading={isLoading}
+        metric={data?.vix}
+        tone={data?.vix ? VIX_TONE(data.vix.value) : 'neutral'}
+        precision={2}
+        deltaSuffix="today"
+      />
+      <SentimentCard
+        title="Fear & Greed"
+        sub="CNN Index · 0–100"
+        loading={isLoading}
+        metric={data?.fearGreed}
+        tone={data?.fearGreed ? FG_TONE(data.fearGreed.value) : 'neutral'}
+        precision={0}
+        deltaSuffix="vs prev close"
+      />
+    </div>
+  )
+}
+
+function SentimentCard({ title, sub, loading, metric, tone, precision, deltaSuffix }: {
+  title: string
+  sub: string
+  loading: boolean
+  metric: { value: number; change: number; label: string } | null | undefined
+  tone: 'up' | 'down' | 'warn' | 'neutral'
+  precision: number
+  deltaSuffix: string
+}) {
+  return (
+    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-3.5 sm:px-5 py-3 sm:py-4 min-w-0">
+      <p className="text-micro text-text-3 uppercase tracking-widest truncate">{title}</p>
+      <p className="text-[10px] text-text-3 truncate mt-0.5">{sub}</p>
+
+      {loading ? (
+        <div className="h-[34px] sm:h-[42px] bg-surface-2 rounded animate-pulse mt-2" />
+      ) : metric == null ? (
+        <p className="text-small text-text-3 mt-2">Unavailable</p>
+      ) : (
+        <>
+          <p className={cn(
+            'tabular font-bold text-[26px] sm:text-[34px] leading-none tracking-tight mt-1.5',
+            TONE_TEXT[tone]
+          )}>
+            {metric.value.toFixed(precision)}
+          </p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
+            <span className={cn(
+              'inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap',
+              TONE_CHIP[tone]
+            )}>
+              {metric.label}
+            </span>
+            {Math.abs(metric.change) >= 0.01 && (
+              <span className="flex items-center gap-0.5 text-[10.5px] text-text-3 whitespace-nowrap">
+                {metric.change >= 0
+                  ? <TrendingUp size={10} className="text-up" />
+                  : <TrendingDown size={10} className="text-down" />}
+                <span className={cn('tabular', metric.change >= 0 ? 'text-up' : 'text-down')}>
+                  {metric.change >= 0 ? '+' : ''}{metric.change.toFixed(precision)}
+                </span>
+                <span className="hidden sm:inline ml-0.5">{deltaSuffix}</span>
+              </span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

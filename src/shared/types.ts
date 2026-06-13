@@ -13,6 +13,7 @@ export interface Account {
   color: string
   number: string
   snaptrade_account_id?: string | null
+  last_synced_at?: string | null
   created_at: string
 }
 

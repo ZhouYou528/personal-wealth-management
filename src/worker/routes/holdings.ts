@@ -5,8 +5,6 @@ import type { Env } from '../types'
 import * as q from '../db/queries'
 import { computeHoldings } from '../lib/positions'
 import { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } from '../lib/market'
-import { createSnapClient } from '../lib/snaptrade'
-import type { SnapUnifiedPosition, SnapBalance } from '../lib/snaptrade'
 import type { Holding, Quote, AssetKind } from '@shared/types'
 
 const SYMBOL_NAMES: Record<string, string> = {
@@ -26,26 +24,9 @@ function isMarketHours(): boolean {
 }
 
 // ── Stale times ──────────────────────────────────────────────────
-const SNAP_STALE_MS  = () => isMarketHours() ? 3 * 60_000   : 15 * 60_000
 const QUOTE_STALE_MS = (sym: string) => isCrypto(sym)
   ? (isMarketHours() ? 3 * 60_000 : 5 * 60_000)
   : (isMarketHours() ? 5 * 60_000 : 30 * 60_000)
-
-// ── Batched KV: all snap positions in ONE key ────────────────────
-// Free tier allows 1,000 writes/day — one key for all accounts vs N keys saves quota.
-interface SnapPosEntry { unified: SnapUnifiedPosition[]; balances: SnapBalance[]; refreshAfter: number }
-type SnapBatch = Record<string, SnapPosEntry>
-
-async function readSnapBatch(env: Env): Promise<SnapBatch> {
-  try {
-    return (await env.PRICE_CACHE.get('snap:all', 'json') as SnapBatch | null) ?? {}
-  } catch { return {} }
-}
-
-async function writeSnapBatch(env: Env, batch: SnapBatch): Promise<void> {
-  await env.PRICE_CACHE.put('snap:all', JSON.stringify(batch), { expirationTtl: 86_400 })
-    .catch((e) => console.error('KV snap:all write failed:', e))
-}
 
 // ── Batched KV: all quotes in ONE key ────────────────────────────
 interface QuoteEntry { price: number; change?: number; changePct?: number; refreshAfter: number }
@@ -82,14 +63,6 @@ async function getUsdCadRate(env: Env): Promise<number> {
   return 1.37
 }
 
-function unifiedKind(kind: string): AssetKind {
-  switch (kind) {
-    case 'etf': return 'etf'; case 'crypto': return 'crypto'; case 'mutualfund': return 'mutual_fund'
-    case 'option': return 'option'; case 'cef': return 'etf'; case 'other': return 'mutual_fund'
-    case 'adr': case 'stock': default: return 'stock'
-  }
-}
-
 // Single-symbol resolver for D1 holdings (/quote/:symbol and d1Holdings map)
 async function resolveQuote(symbol: string, kind: string, fallback: number, env: Env): Promise<ResolvedQuote> {
   if (symbol === 'CASH') return { price: 1 }
@@ -116,24 +89,29 @@ app.get('/', async (c) => {
     const withPrices = c.req.query('prices') !== 'false'
 
     // ── D1 queries in parallel ───────────────────────────────────
-    const [allAccountsResult, marks, transactions] = await Promise.all([
+    // "Broker-managed" = the account has positions persisted in
+    // snaptrade_positions (whether the source is SnapTrade or IBKR Flex).
+    // We use that as the trigger to read positions from the snapshot rather
+    // than computing from transactions.
+    const [allAccountsResult, marks, transactions, brokerManagedRows] = await Promise.all([
       c.env.DB.prepare('SELECT id, snaptrade_account_id FROM accounts').all<{ id: string; snaptrade_account_id: string | null }>(),
       q.getHoldingMarks(c.env.DB),
       q.getAllTransactionsForHoldings(c.env.DB, accountId),
+      c.env.DB.prepare('SELECT DISTINCT account_id FROM snaptrade_positions').all<{ account_id: string }>(),
     ])
     const tD1 = Date.now() - t0
 
-    const linkedMap  = new Map<string, string>()
-    const reverseMap = new Map<string, string>()
+    const brokerManagedIds = new Set<string>(
+      (brokerManagedRows.results ?? []).map(r => r.account_id)
+    )
+    // Also treat any account with a SnapTrade link as broker-managed, even if
+    // its positions table is empty (could be a fresh sync in flight).
     for (const a of allAccountsResult.results ?? []) {
-      if (a.snaptrade_account_id) {
-        linkedMap.set(a.id, a.snaptrade_account_id)
-        reverseMap.set(a.snaptrade_account_id, a.id)
-      }
+      if (a.snaptrade_account_id) brokerManagedIds.add(a.id)
     }
 
-    const isLinked = accountId ? linkedMap.has(accountId) : false
-    const raw = computeHoldings(transactions).filter(h => !linkedMap.has(h.account_id))
+    const isLinked = accountId ? brokerManagedIds.has(accountId) : false
+    const raw = computeHoldings(transactions).filter(h => !brokerManagedIds.has(h.account_id))
 
     const d1Holdings: Holding[] = await Promise.all(
       raw.map(async (h) => {
@@ -144,206 +122,165 @@ app.get('/', async (c) => {
       })
     )
 
-    // ── SnapTrade holdings ───────────────────────────────────────
+    // ── SnapTrade holdings: read from persisted snapshot tables ──
+    // Cron keeps snaptrade_positions/balances fresh; no live SnapTrade calls
+    // here. Quote freshness is handled by the existing KV quote cache.
     const snapHoldings: Holding[] = []
-    let snapCacheStatus = 'N/A'
-    let snapHits = 0, snapMisses = 0
 
-    if (linkedMap.size > 0 && (!accountId || isLinked)) {
-      const [usdCadRate, snapUser, snapBatch] = await Promise.all([
-        getUsdCadRate(c.env),
-        c.env.DB.prepare('SELECT snaptrade_user_id, user_secret FROM snaptrade_users WHERE id = ?').bind('singleton')
-          .first<{ snaptrade_user_id: string; user_secret: string }>(),
-        readSnapBatch(c.env),
+    if (brokerManagedIds.size > 0 && (!accountId || isLinked)) {
+      const usdCadRate = await getUsdCadRate(c.env)
+      const accountFilter = accountId && isLinked ? [accountId] : [...brokerManagedIds]
+
+      const [persistedPos, persistedBal] = await Promise.all([
+        c.env.DB.prepare(
+          `SELECT account_id, symbol, option_type, strike, expiry, kind, qty,
+                  avg_cost, market_price, currency, underlying, multiplier
+           FROM snaptrade_positions
+           WHERE account_id IN (${accountFilter.map(() => '?').join(',')})`
+        ).bind(...accountFilter).all<{
+          account_id: string; symbol: string; option_type: string; strike: number;
+          expiry: string; kind: string; qty: number; avg_cost: number | null;
+          market_price: number | null; currency: string; underlying: string | null; multiplier: number;
+        }>(),
+        c.env.DB.prepare(
+          `SELECT account_id, currency, cash FROM snaptrade_balances
+           WHERE account_id IN (${accountFilter.map(() => '?').join(',')})`
+        ).bind(...accountFilter).all<{ account_id: string; currency: string; cash: number }>(),
       ])
 
-      if (snapUser) {
-        const snap = createSnapClient(c.env.SNAPTRADE_CLIENT_ID, c.env.SNAPTRADE_CONSUMER_KEY)
-        const userAuth = { userId: snapUser.snaptrade_user_id, userSecret: snapUser.user_secret }
-        const snapAccountIds = accountId
-          ? (linkedMap.get(accountId) ? [linkedMap.get(accountId)!] : [])
-          : [...reverseMap.keys()]
+      // Collect symbols that need a live quote (non-CAD, non-option, no mark)
+      const symbolsToFetch = new Map<string, AssetKind>()
+      for (const p of persistedPos.results ?? []) {
+        if (p.kind === 'option') continue
+        const holdingId = `${p.account_id}:${p.symbol}`
+        if (marks[holdingId] != null) continue
+        if ((p.currency ?? 'USD').toUpperCase() === 'CAD') continue
+        if (withPrices) symbolsToFetch.set(p.symbol, p.kind as AssetKind)
+      }
 
-        const staleSnapAccIds: string[] = []
-        const tSnapStart = Date.now()
+      const tQuoteStart = Date.now()
+      const quoteBatch = await readQuoteBatch(c.env)
+      const staleQuoteSymbols = new Map<string, AssetKind>()
+      const missedSymbols     = new Map<string, AssetKind>()
+      const quoteMap          = new Map<string, ResolvedQuote>()
 
-        // Collect which accounts need synchronous fetching (cold misses)
-        const coldMissIds = snapAccountIds.filter(id => {
-          const entry = snapBatch[id]
-          if (entry) {
-            snapHits++
-            if (Date.now() > entry.refreshAfter) staleSnapAccIds.push(id)
-            return false
+      for (const [sym, kind] of symbolsToFetch) {
+        const entry = quoteBatch[sym]
+        if (entry) {
+          quoteMap.set(sym, { price: entry.price, change: entry.change, changePct: entry.changePct })
+          if (Date.now() > entry.refreshAfter) staleQuoteSymbols.set(sym, kind)
+        } else {
+          missedSymbols.set(sym, kind)
+        }
+      }
+      if (missedSymbols.size > 0) {
+        await Promise.allSettled([...missedSymbols.entries()].map(async ([sym]) => {
+          const raw = await fetchRawQuote(sym, c.env)
+          if (raw) {
+            quoteMap.set(sym, raw)
+            quoteBatch[sym] = { ...raw, refreshAfter: Date.now() + QUOTE_STALE_MS(sym) }
           }
-          snapMisses++
-          return true
-        })
+        }))
+        await writeQuoteBatch(c.env, quoteBatch)
+      }
+      const tQuotes = Date.now() - tQuoteStart
 
-        // Fetch cold misses synchronously, update batch in-memory
-        if (coldMissIds.length > 0) {
-          await Promise.allSettled(coldMissIds.map(async (snapAccId) => {
-            const [unifiedRes, balancesRes] = await Promise.allSettled([
-              snap.getAccountAllPositions(userAuth, snapAccId),
-              snap.getAccountBalances(userAuth, snapAccId),
-            ])
-            snapBatch[snapAccId] = {
-              unified:  unifiedRes.status  === 'fulfilled' ? unifiedRes.value  : [],
-              balances: balancesRes.status === 'fulfilled' ? balancesRes.value : [],
-              refreshAfter: Date.now() + SNAP_STALE_MS(),
-            }
-          }))
-          // One KV write for all updated accounts
-          await writeSnapBatch(c.env, snapBatch)
-        }
-
-        const tSnap = Date.now() - tSnapStart
-        snapCacheStatus = `${snapHits}hit/${snapMisses}miss ${tSnap}ms`
-
-        // Background refresh stale accounts (one KV read + write after response)
-        if (staleSnapAccIds.length > 0) {
-          c.executionCtx.waitUntil((async () => {
-            const current = await readSnapBatch(c.env)
-            await Promise.allSettled(staleSnapAccIds.map(async (snapAccId) => {
-              const [unifiedRes, balancesRes] = await Promise.allSettled([
-                snap.getAccountAllPositions(userAuth, snapAccId),
-                snap.getAccountBalances(userAuth, snapAccId),
-              ])
-              current[snapAccId] = {
-                unified:  unifiedRes.status  === 'fulfilled' ? unifiedRes.value  : current[snapAccId]?.unified  ?? [],
-                balances: balancesRes.status === 'fulfilled' ? balancesRes.value : current[snapAccId]?.balances ?? [],
-                refreshAfter: Date.now() + SNAP_STALE_MS(),
-              }
-            }))
-            await writeSnapBatch(c.env, current)
-          })())
-        }
-
-        // ── Quote SWR: all quotes in one key ──────────────────────
-        const symbolsToFetch = new Map<string, AssetKind>()
-        for (const id of snapAccountIds) {
-          const entry = snapBatch[id]
-          if (!entry) continue
-          const d1Id = reverseMap.get(id)
-          if (!d1Id) continue
-          for (const pos of entry.unified ?? []) {
-            const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
-            if (instrKind === 'option') continue
-            const sym = pos.instrument?.symbol
-            if (!sym || marks[`${d1Id}:${sym}`] != null) continue
-            if ((pos.currency ?? 'USD').toUpperCase() === 'CAD') continue
-            if (withPrices) symbolsToFetch.set(sym, unifiedKind(instrKind))
-          }
-        }
-
-        const tQuoteStart = Date.now()
-        const quoteBatch = await readQuoteBatch(c.env)
-        const staleQuoteSymbols = new Map<string, AssetKind>()
-        const missedSymbols     = new Map<string, AssetKind>()
-        const quoteMap          = new Map<string, ResolvedQuote>()
-
-        for (const [sym, kind] of symbolsToFetch) {
-          const entry = quoteBatch[sym]
-          if (entry) {
-            quoteMap.set(sym, { price: entry.price, change: entry.change, changePct: entry.changePct })
-            if (Date.now() > entry.refreshAfter) staleQuoteSymbols.set(sym, kind)
-          } else {
-            missedSymbols.set(sym, kind)
-          }
-        }
-
-        // Fetch cold-miss quotes synchronously
-        if (missedSymbols.size > 0) {
-          await Promise.allSettled([...missedSymbols.entries()].map(async ([sym]) => {
+      if (staleQuoteSymbols.size > 0) {
+        c.executionCtx.waitUntil((async () => {
+          const current = await readQuoteBatch(c.env)
+          await Promise.allSettled([...staleQuoteSymbols.entries()].map(async ([sym]) => {
             const raw = await fetchRawQuote(sym, c.env)
-            if (raw) {
-              quoteMap.set(sym, raw)
-              quoteBatch[sym] = { ...raw, refreshAfter: Date.now() + QUOTE_STALE_MS(sym) }
-            }
+            if (raw) current[sym] = { ...raw, refreshAfter: Date.now() + QUOTE_STALE_MS(sym) }
           }))
-          // One KV write for all new quote entries
-          await writeQuoteBatch(c.env, quoteBatch)
+          await writeQuoteBatch(c.env, current)
+        })())
+      }
+
+      for (const p of persistedPos.results ?? []) {
+        const isCAD = (p.currency ?? 'USD').toUpperCase() === 'CAD'
+        const toUsd = (n: number) => isCAD ? n / usdCadRate : n
+        const cost = p.avg_cost ?? 0
+
+        if (p.kind === 'option') {
+          const underlying = p.underlying ?? p.symbol
+          const optType = p.option_type === 'put' ? 'put' : 'call'
+          const holdingId = `${p.account_id}:${underlying}:${optType}:${p.strike}:${p.expiry}`
+          const multiplier = p.multiplier || 100
+          const costPerShare = cost / multiplier
+          const px = marks[holdingId] != null
+            ? marks[holdingId]
+            : (p.market_price ?? costPerShare)
+          snapHoldings.push({
+            id: holdingId,
+            account_id: p.account_id,
+            symbol: underlying,
+            name: `${underlying} ${optType === 'put' ? 'P' : 'C'}${p.strike} ${p.expiry.slice(5).replace('-', '/')}`,
+            kind: 'option',
+            qty: p.qty,
+            cost: costPerShare,
+            px,
+            marked: marks[holdingId] != null,
+            option_type: optType,
+            strike: p.strike,
+            expiry: p.expiry,
+            underlying,
+            multiplier,
+          })
+          continue
         }
 
-        const tQuotes = Date.now() - tQuoteStart
-
-        // Background refresh stale quotes (one KV read + write after response)
-        if (staleQuoteSymbols.size > 0) {
-          c.executionCtx.waitUntil((async () => {
-            const current = await readQuoteBatch(c.env)
-            await Promise.allSettled([...staleQuoteSymbols.entries()].map(async ([sym]) => {
-              const raw = await fetchRawQuote(sym, c.env)
-              if (raw) current[sym] = { ...raw, refreshAfter: Date.now() + QUOTE_STALE_MS(sym) }
-            }))
-            await writeQuoteBatch(c.env, current)
-          })())
-        }
-
-        // Assemble snap holdings
-        for (const snapAccId of snapAccountIds) {
-          const entry = snapBatch[snapAccId]
-          if (!entry) continue
-          const d1Id = reverseMap.get(snapAccId)
-          if (!d1Id) continue
-          const { unified, balances } = entry
-
-          for (const pos of (Array.isArray(unified) ? unified : [])) {
-            try {
-              const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
-              const qty = Number(pos.units) || 0
-              const cost = Number(pos.cost_basis) || 0
-              const livePrice = pos.price != null ? Number(pos.price) : undefined
-
-              if (instrKind === 'option') {
-                const inst = pos.instrument
-                const underlying = inst.underlying?.symbol ?? 'UNKNOWN'
-                const optType = (inst.option_type ?? '').toLowerCase() === 'put' ? 'put' : 'call'
-                const strike = Number(inst.strike_price) || 0
-                const expiry = (inst.expiration_date ?? '').slice(0, 10)
-                const holdingId = `${d1Id}:${underlying}:${optType}:${strike}:${expiry}`
-                const multiplier = inst.is_mini_option ? 10 : (inst.multiplier ?? 100)
-                const costPerShare = (Number(pos.cost_basis) || 0) / multiplier
-                const px = marks[holdingId] != null ? marks[holdingId] : (livePrice ?? costPerShare)
-                snapHoldings.push({ id: holdingId, account_id: d1Id, symbol: underlying, name: `${underlying} ${optType === 'put' ? 'P' : 'C'}${strike} ${expiry.slice(5).replace('-', '/')}`, kind: 'option', qty, cost: costPerShare, px, marked: marks[holdingId] != null, option_type: optType, strike, expiry, underlying, multiplier })
-                continue
-              }
-
-              const sym = pos.instrument?.symbol ?? 'UNKNOWN'
-              const kind = unifiedKind(instrKind)
-              const holdingId = `${d1Id}:${sym}`
-              const isCAD = (pos.currency ?? 'USD').toUpperCase() === 'CAD'
-              const toUsd = (n: number) => isCAD ? n / usdCadRate : n
-
-              let qt: ResolvedQuote
-              if (marks[holdingId] != null) qt = { price: marks[holdingId] }
-              else if (isCAD)              qt = { price: toUsd(livePrice ?? cost) }
-              else if (!withPrices)        qt = { price: livePrice ?? cost }
-              else {
-                const fetched = quoteMap.get(sym) ?? { price: livePrice ?? cost }
-                qt = { price: livePrice ?? fetched.price, change: fetched.change, changePct: fetched.changePct }
-              }
-
-              snapHoldings.push({ id: holdingId, account_id: d1Id, symbol: sym, name: pos.instrument?.description ?? SYMBOL_NAMES[sym] ?? sym, kind, qty, cost: toUsd(cost), px: qt.price, change: qt.change, changePct: qt.changePct, marked: marks[holdingId] != null })
-            } catch (posErr) { console.error(`pos error ${snapAccId}:`, posErr) }
-          }
-
-          for (const bal of (Array.isArray(balances) ? balances : [])) {
-            if ((bal.cash ?? 0) <= 0) continue
-            const currCode = bal.currency?.code ?? 'USD'
-            const cashUsd = currCode === 'CAD' ? bal.cash / usdCadRate : bal.cash
-            snapHoldings.push({ id: `${d1Id}:CASH:${currCode}`, account_id: d1Id, symbol: 'CASH', name: `Cash (${currCode})`, kind: 'cash', qty: cashUsd, cost: 1, px: 1, marked: false })
+        const holdingId = `${p.account_id}:${p.symbol}`
+        let qt: ResolvedQuote
+        if (marks[holdingId] != null) qt = { price: marks[holdingId] }
+        else if (isCAD)              qt = { price: toUsd(p.market_price ?? cost) }
+        else if (!withPrices)        qt = { price: p.market_price ?? cost }
+        else {
+          const fetched = quoteMap.get(p.symbol) ?? { price: p.market_price ?? cost }
+          qt = {
+            price: p.market_price ?? fetched.price,
+            change: fetched.change,
+            changePct: fetched.changePct,
           }
         }
 
-        const tTotal = Date.now() - t0
-        return c.json([...d1Holdings, ...snapHoldings], 200, {
-          'X-Timing-D1-Ms':       String(tD1),
-          'X-Timing-Snap-Ms':     String(tSnap),
-          'X-Timing-Quotes-Ms':   String(tQuotes),
-          'X-Timing-Total-Ms':    String(tTotal),
-          'X-Snap-Cache':         snapCacheStatus,
-          'X-Quotes-Cache':       `${quoteMap.size - missedSymbols.size}hit/${missedSymbols.size}miss/${staleQuoteSymbols.size}stale`,
+        snapHoldings.push({
+          id: holdingId,
+          account_id: p.account_id,
+          symbol: p.symbol,
+          name: SYMBOL_NAMES[p.symbol] ?? p.symbol,
+          kind: p.kind as AssetKind,
+          qty: p.qty,
+          cost: toUsd(cost),
+          px: qt.price,
+          change: qt.change,
+          changePct: qt.changePct,
+          marked: marks[holdingId] != null,
         })
       }
+
+      for (const b of persistedBal.results ?? []) {
+        if (b.cash <= 0) continue
+        const cashUsd = b.currency === 'CAD' ? b.cash / usdCadRate : b.cash
+        snapHoldings.push({
+          id: `${b.account_id}:CASH:${b.currency}`,
+          account_id: b.account_id,
+          symbol: 'CASH',
+          name: `Cash (${b.currency})`,
+          kind: 'cash',
+          qty: cashUsd,
+          cost: 1,
+          px: 1,
+          marked: false,
+        })
+      }
+
+      const tTotal = Date.now() - t0
+      return c.json([...d1Holdings, ...snapHoldings], 200, {
+        'X-Timing-D1-Ms':     String(tD1),
+        'X-Timing-Quotes-Ms': String(tQuotes),
+        'X-Timing-Total-Ms':  String(tTotal),
+        'X-Snap-Source':      'd1-persisted',
+      })
     }
 
     return c.json([...d1Holdings, ...snapHoldings], 200, {

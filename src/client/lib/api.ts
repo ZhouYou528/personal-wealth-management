@@ -179,35 +179,6 @@ export const creditCards = {
 
 // ── SnapTrade ────────────────────────────────────────────────
 
-export interface SyncActivity {
-  id: string
-  date: string
-  type: string
-  txType: string
-  symbol: string | null
-  qty: number
-  price: number
-  total: number
-  currency: string
-  description: string
-  matched: boolean
-  matchedTxId: string | null
-}
-
-export interface SyncD1Only {
-  id: string
-  date: string
-  type: string
-  symbol?: string | null
-  qty?: number | null
-  total: number
-}
-
-export interface SyncPreviewResponse {
-  activities: SyncActivity[]
-  d1Only: SyncD1Only[]
-}
-
 export interface SnapBrokerage {
   id: string
   name: string
@@ -262,18 +233,66 @@ export const snaptrade = {
   disconnect: () =>
     request<{ ok: boolean }>('/snaptrade/register', { method: 'DELETE' }),
 
-  syncPreview: (accountId: string, startDate?: string, endDate?: string) => {
-    const qs = new URLSearchParams({ accountId })
-    if (startDate) qs.set('startDate', startDate)
-    if (endDate)   qs.set('endDate', endDate)
-    return request<SyncPreviewResponse>(`/snaptrade/sync-preview?${qs}`)
-  },
-
-  syncImport: (accountId: string, activityIds: string[], startDate?: string, endDate?: string) =>
-    request<{ ok: boolean; imported: number }>('/snaptrade/sync-import', {
+  // Unified sync: refreshes positions + balances + recent activities for one
+  // SnapTrade-linked account. Subject to a 60s per-account debounce.
+  // Returns `rateLimited: true` + `retryAfter` instead of throwing on 429.
+  syncAccount: async (accountId: string): Promise<
+    | { rateLimited: true; retryAfter: number }
+    | { rateLimited: false; activities_inserted: number; positions_upserted: number;
+        positions_culled: number; balances_upserted: number; errors: string[] }
+  > => {
+    const { apiSecret } = useStore.getState()
+    const res = await fetch(`${BASE}/snaptrade/sync/${accountId}`, {
       method: 'POST',
-      body: JSON.stringify({ accountId, activityIds, startDate, endDate }),
-    }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiSecret && { Authorization: `Bearer ${apiSecret}` }),
+      },
+    })
+    const body = await res.json() as { retry_after?: number; error?: string } & Record<string, unknown>
+    if (res.status === 429) return { rateLimited: true, retryAfter: body.retry_after ?? 60 }
+    if (!res.ok) throw new Error(body.error ?? 'Sync failed')
+    return { rateLimited: false, ...(body as Omit<{ activities_inserted: number; positions_upserted: number;
+        positions_culled: number; balances_upserted: number; errors: string[] }, never>) }
+  },
+}
+
+// ── IBKR Flex Web Service ────────────────────────────────────
+// Single endpoint that pulls BOTH IBKR accounts in one call.
+export const ibkrFlex = {
+  sync: async (): Promise<
+    | { rateLimited: true; retryAfter: number }
+    | { rateLimited: false; trades_inserted: number; cash_inserted: number;
+        positions_upserted: number; positions_culled: number;
+        accounts_synced: string[]; errors: string[] }
+  > => {
+    const { apiSecret } = useStore.getState()
+    const res = await fetch(`${BASE}/ibkr-flex/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiSecret && { Authorization: `Bearer ${apiSecret}` }),
+      },
+    })
+    const body = await res.json() as { retry_after?: number; error?: string } & Record<string, unknown>
+    if (res.status === 429) return { rateLimited: true, retryAfter: body.retry_after ?? 60 }
+    if (!res.ok) throw new Error(body.error ?? 'IBKR Flex sync failed')
+    return { rateLimited: false, ...(body as Omit<{ trades_inserted: number; cash_inserted: number;
+        positions_upserted: number; positions_culled: number;
+        accounts_synced: string[]; errors: string[] }, never>) }
+  },
+}
+
+// ── Market sentiment ─────────────────────────────────────────
+
+export interface Sentiment {
+  vix:       { value: number; change: number; label: string } | null
+  fearGreed: { value: number; change: number; label: string } | null
+  fetchedAt: string
+}
+
+export const sentiment = {
+  get: () => request<Sentiment>('/sentiment'),
 }
 
 // ── Admin ────────────────────────────────────────────────────

@@ -2,16 +2,40 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Check, Pencil, Plus, Trash2, X, Wifi,
-  ExternalLink, ChevronRight, Building2, ArrowDownToLine,
-  ChevronDown, AlertCircle,
+  ExternalLink, ChevronRight, Building2,
+  RefreshCw,
 } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { formatDistanceToNowStrict, parseISO } from 'date-fns'
 import {
   accounts as accountsApi,
   holdings as holdingsApi,
   snaptrade as snapApi,
+  ibkrFlex as ibkrFlexApi,
 } from '@/lib/api'
-import type { SnapBrokerage, SnapBrokerAccount, ImportAccountItem, SyncActivity, SyncD1Only } from '@/lib/api'
+
+function formatRelativeTime(iso: string): string {
+  try {
+    return `${formatDistanceToNowStrict(parseISO(iso))} ago`
+  } catch {
+    return 'recently'
+  }
+}
+
+// Compact form for inline display: "2 minutes" → "2m", "5 hours" → "5h", etc.
+function formatRelativeShort(iso: string): string {
+  try {
+    const s = formatDistanceToNowStrict(parseISO(iso))
+    const m = s.match(/^(\d+)\s+(second|minute|hour|day|month|year)/)
+    if (!m) return s
+    const map: Record<string, string> = { second: 's', minute: 'm', hour: 'h', day: 'd', month: 'mo', year: 'y' }
+    return `${m[1]}${map[m[2]] ?? ''}`
+  } catch {
+    return ''
+  }
+}
+import type { SnapBrokerage, SnapBrokerAccount, ImportAccountItem } from '@/lib/api'
 import { useStore } from '@/lib/store'
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor,
@@ -33,8 +57,13 @@ const ACCOUNT_TYPES: AccountType[] = [
   'RRSP', 'TFSA', 'FHSA', 'RESP', 'Crypto',
 ]
 
+// 6×4 grid of curated swatches covering the hue wheel at two saturations,
+// plus a freeform `<input type="color">` for anything else.
 const ACCENT_COLORS = [
-  '#10B981', '#3B82F6', '#7C3AED', '#F97316', '#F59E0B', '#06B6D4', '#EC4899', '#A1A1AA',
+  '#EF4444', '#F97316', '#F59E0B', '#EAB308', '#84CC16', '#22C55E',
+  '#10B981', '#14B8A6', '#06B6D4', '#0EA5E9', '#3B82F6', '#6366F1',
+  '#8B5CF6', '#A855F7', '#D946EF', '#EC4899', '#F43F5E', '#78716C',
+  '#991B1B', '#9A3412', '#854D0E', '#166534', '#1E40AF', '#581C87',
 ]
 
 // ── Add Account modal (multi-step) ───────────────────────────
@@ -456,308 +485,6 @@ function BrokerTile({
   )
 }
 
-// ── Sync Modal ───────────────────────────────────────────────
-
-const TYPE_LABELS: Record<string, string> = {
-  buy: 'Buy', sell: 'Sell', dividend: 'Div', interest: 'Int',
-  deposit: 'Dep', withdraw: 'Wdw', transfer: 'Xfer',
-  transfer_in: 'Xfer In', transfer_out: 'Xfer Out',
-}
-
-function fmtDate(s: string) {
-  return s ? new Date(s + 'T00:00:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: '2-digit' }) : '—'
-}
-
-function SyncModal({
-  account,
-  open,
-  onClose,
-}: {
-  account: Account
-  open: boolean
-  onClose: () => void
-}) {
-  const qc = useQueryClient()
-  const today = new Date().toISOString().slice(0, 10)
-  const oneYearAgo = new Date(Date.now() - 365 * 86400_000).toISOString().slice(0, 10)
-
-  const [startDate, setStartDate] = useState(oneYearAgo)
-  const [endDate, setEndDate]     = useState(today)
-  const [preview, setPreview]     = useState<{ activities: SyncActivity[]; d1Only: SyncD1Only[] } | null>(null)
-  const [selected, setSelected]   = useState<Set<string>>(new Set())
-  const [showMatched, setShowMatched]   = useState(false)
-  const [showD1Only, setShowD1Only]     = useState(false)
-  const [loading, setLoading]     = useState(false)
-  const [importing, setImporting] = useState(false)
-  const [error, setError]         = useState('')
-  const [importedCount, setImportedCount] = useState<number | null>(null)
-
-  async function loadPreview() {
-    setLoading(true); setError(''); setPreview(null); setSelected(new Set()); setImportedCount(null)
-    try {
-      const data = await snapApi.syncPreview(account.id, startDate, endDate)
-      setPreview(data)
-      // Auto-select all unmatched
-      setSelected(new Set(data.activities.filter(a => !a.matched).map(a => a.id)))
-    } catch (e) { setError(String(e)) }
-    finally { setLoading(false) }
-  }
-
-  async function handleImport() {
-    if (!preview || selected.size === 0) return
-    setImporting(true); setError('')
-    try {
-      const res = await snapApi.syncImport(account.id, [...selected], startDate, endDate)
-      setImportedCount(res.imported)
-      qc.invalidateQueries({ queryKey: ['transactions'] })
-      qc.invalidateQueries({ queryKey: ['holdings'] })
-      // Refresh preview so imported items now show as matched
-      const data = await snapApi.syncPreview(account.id, startDate, endDate)
-      setPreview(data)
-      setSelected(new Set())
-    } catch (e) { setError(String(e)) }
-    finally { setImporting(false) }
-  }
-
-  function toggleAll(unmatched: SyncActivity[]) {
-    if (selected.size === unmatched.length) setSelected(new Set())
-    else setSelected(new Set(unmatched.map(a => a.id)))
-  }
-
-  function handleClose() {
-    setPreview(null); setSelected(new Set()); setError(''); setImportedCount(null)
-    onClose()
-  }
-
-  const unmatched = preview?.activities.filter(a => !a.matched) ?? []
-  const matched   = preview?.activities.filter(a => a.matched) ?? []
-
-  return (
-    <Dialog.Root open={open} onOpenChange={o => !o && handleClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/40 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl max-h-[88vh] flex flex-col">
-          <div className="bg-surface rounded-lg shadow-lg flex flex-col max-h-[88vh]">
-
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
-              <div>
-                <Dialog.Title className="text-section-h2 text-text">Sync Transactions</Dialog.Title>
-                <p className="text-micro text-text-3 mt-0.5">{account.name} · {account.institution}</p>
-              </div>
-              <button onClick={handleClose} className="text-text-3 hover:text-text p-1 rounded">
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Date range + load */}
-            <div className="px-6 py-4 flex items-center gap-3 border-b border-border flex-shrink-0">
-              <div className="flex items-center gap-2 flex-1">
-                <input
-                  type="date" value={startDate}
-                  onChange={e => setStartDate(e.target.value)}
-                  className="px-2.5 py-1.5 rounded-sm border border-border bg-surface-2 text-text text-small focus:outline-none focus:border-accent"
-                />
-                <span className="text-text-3 text-small">to</span>
-                <input
-                  type="date" value={endDate}
-                  onChange={e => setEndDate(e.target.value)}
-                  className="px-2.5 py-1.5 rounded-sm border border-border bg-surface-2 text-text text-small focus:outline-none focus:border-accent"
-                />
-              </div>
-              <Button onClick={loadPreview} disabled={loading}>
-                {loading ? 'Loading…' : 'Load comparison'}
-              </Button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto">
-
-              {error && (
-                <div className="mx-6 mt-4 px-3 py-2 bg-down-soft text-down rounded-sm text-small flex items-center gap-2">
-                  <AlertCircle size={14} /> {error}
-                </div>
-              )}
-
-              {importedCount !== null && (
-                <div className="mx-6 mt-4 px-3 py-2 bg-up/10 text-up rounded-sm text-small font-medium">
-                  ✓ Imported {importedCount} transaction{importedCount !== 1 ? 's' : ''} successfully
-                </div>
-              )}
-
-              {preview && (
-                <div className="px-6 py-4 space-y-4">
-
-                  {/* Summary pills */}
-                  <div className="flex gap-2 flex-wrap">
-                    <span className="px-2.5 py-1 rounded-full bg-surface-2 text-text-2 text-micro">
-                      {preview.activities.length} broker activities
-                    </span>
-                    <span className="px-2.5 py-1 rounded-full bg-up/10 text-up text-micro font-medium">
-                      {matched.length} already recorded
-                    </span>
-                    {unmatched.length > 0 && (
-                      <span className="px-2.5 py-1 rounded-full bg-accent/10 text-accent text-micro font-medium">
-                        {unmatched.length} missing
-                      </span>
-                    )}
-                    {preview.d1Only.length > 0 && (
-                      <span className="px-2.5 py-1 rounded-full bg-surface-2 text-text-3 text-micro">
-                        {preview.d1Only.length} manual-only
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Unmatched section */}
-                  {unmatched.length === 0 ? (
-                    <div className="text-center py-6 text-text-3 text-small">
-                      ✓ All broker activities are already in your records
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-small font-semibold text-text">
-                          Missing from your records
-                        </h3>
-                        <button
-                          onClick={() => toggleAll(unmatched)}
-                          className="text-micro text-accent hover:underline"
-                        >
-                          {selected.size === unmatched.length ? 'Deselect all' : 'Select all'}
-                        </button>
-                      </div>
-                      <div className="border border-border rounded-md overflow-hidden">
-                        {unmatched.map((a, i) => (
-                          <label
-                            key={a.id}
-                            className={cn(
-                              'flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-surface-2 transition-colors',
-                              i > 0 && 'border-t border-border',
-                              selected.has(a.id) && 'bg-accent/5',
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected.has(a.id)}
-                              onChange={e => {
-                                const s = new Set(selected)
-                                e.target.checked ? s.add(a.id) : s.delete(a.id)
-                                setSelected(s)
-                              }}
-                              className="accent-accent"
-                            />
-                            <span className="text-micro text-text-3 w-20 flex-shrink-0">{fmtDate(a.date)}</span>
-                            <span className={cn(
-                              'text-micro font-medium px-1.5 py-0.5 rounded-sm w-14 text-center flex-shrink-0',
-                              a.txType === 'buy'  ? 'bg-up/10 text-up' :
-                              a.txType === 'sell' ? 'bg-down/10 text-down' :
-                              a.txType === 'dividend' || a.txType === 'interest' ? 'bg-accent/10 text-accent' :
-                              'bg-surface-2 text-text-3'
-                            )}>
-                              {TYPE_LABELS[a.txType] ?? a.type}
-                            </span>
-                            <span className="text-small text-text font-medium flex-1 min-w-0 truncate">
-                              {a.symbol ?? a.description ?? '—'}
-                            </span>
-                            {a.qty > 0 && (
-                              <span className="text-micro text-text-3 flex-shrink-0">
-                                {a.qty % 1 === 0 ? a.qty : a.qty.toFixed(4)} sh
-                                {a.price > 0 ? ` @ $${a.price.toFixed(2)}` : ''}
-                              </span>
-                            )}
-                            <span className="text-small font-semibold text-text tabular flex-shrink-0 w-20 text-right">
-                              ${a.total.toFixed(2)}
-                            </span>
-                            <span className="text-micro text-text-3 flex-shrink-0 w-8">{a.currency}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Already matched — collapsible */}
-                  {matched.length > 0 && (
-                    <div>
-                      <button
-                        onClick={() => setShowMatched(v => !v)}
-                        className="flex items-center gap-1.5 text-small text-text-3 hover:text-text transition-colors"
-                      >
-                        <ChevronDown size={14} className={cn('transition-transform', showMatched && 'rotate-180')} />
-                        Already in your records ({matched.length})
-                      </button>
-                      {showMatched && (
-                        <div className="mt-2 border border-border rounded-md overflow-hidden opacity-60">
-                          {matched.map((a, i) => (
-                            <div key={a.id} className={cn('flex items-center gap-3 px-3 py-2 text-micro', i > 0 && 'border-t border-border')}>
-                              <Check size={12} className="text-up flex-shrink-0" />
-                              <span className="text-text-3 w-20 flex-shrink-0">{fmtDate(a.date)}</span>
-                              <span className="text-text-3 w-14 flex-shrink-0">{TYPE_LABELS[a.txType] ?? a.type}</span>
-                              <span className="text-text flex-1 truncate">{a.symbol ?? a.description ?? '—'}</span>
-                              <span className="text-text-3 w-20 text-right">${a.total.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* D1-only — collapsible */}
-                  {preview.d1Only.length > 0 && (
-                    <div>
-                      <button
-                        onClick={() => setShowD1Only(v => !v)}
-                        className="flex items-center gap-1.5 text-small text-text-3 hover:text-text transition-colors"
-                      >
-                        <ChevronDown size={14} className={cn('transition-transform', showD1Only && 'rotate-180')} />
-                        Manual-only entries ({preview.d1Only.length}) — not found in broker data
-                      </button>
-                      {showD1Only && (
-                        <div className="mt-2 border border-border rounded-md overflow-hidden">
-                          {preview.d1Only.map((tx, i) => (
-                            <div key={tx.id} className={cn('flex items-center gap-3 px-3 py-2 text-micro', i > 0 && 'border-t border-border')}>
-                              <span className="text-text-3 w-20 flex-shrink-0">{fmtDate(tx.date)}</span>
-                              <span className="text-text-3 w-14 flex-shrink-0">{TYPE_LABELS[tx.type] ?? tx.type}</span>
-                              <span className="text-text flex-1 truncate">{tx.symbol ?? '—'}</span>
-                              <span className="text-text-3 w-20 text-right">${tx.total.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {!preview && !loading && !error && (
-                <div className="px-6 py-10 text-center text-text-3 text-small">
-                  Set a date range and click <strong className="text-text">Load comparison</strong> to see what's missing.
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 py-4 border-t border-border flex items-center justify-between flex-shrink-0">
-              <span className="text-micro text-text-3">
-                {selected.size > 0 ? `${selected.size} selected to import` : ''}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={handleClose}>Cancel</Button>
-                <Button
-                  onClick={handleImport}
-                  disabled={selected.size === 0 || importing}
-                >
-                  <ArrowDownToLine size={14} />
-                  {importing ? 'Importing…' : `Import ${selected.size > 0 ? selected.size : ''} selected`}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
 // ── Delete confirmation dialog ───────────────────────────────
 
 function DeleteConfirmDialog({
@@ -837,13 +564,58 @@ export function Accounts() {
   const qc = useQueryClient()
   const { fmt } = useMoney()
   const [addOpen, setAddOpen] = useState(false)
-  const [syncAccount, setSyncAccount] = useState<Account | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
-  const [editingTypeId, setEditingTypeId] = useState<string | null>(null)
-  const [editingColorId, setEditingColorId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
+  const [refreshingId, setRefreshingId] = useState<string | null>(null)
+  const [refreshMsg, setRefreshMsg] = useState<{ accountId: string; text: string; tone: 'ok' | 'warn' } | null>(null)
+
+  const refreshOne = useCallback(async (acc: Account) => {
+    if (refreshingId) return
+    setRefreshingId(acc.id)
+    setRefreshMsg(null)
+    try {
+      // IBKR accounts use the Flex Web Service; one call refreshes both IBKR
+      // accounts at once (the API is statement-wide, not per-account).
+      const isIbkr = acc.institution === 'Interactive Brokers'
+      if (isIbkr) {
+        const r = await ibkrFlexApi.sync()
+        if (r.rateLimited) {
+          setRefreshMsg({ accountId: acc.id, text: `Wait ${r.retryAfter}s`, tone: 'warn' })
+        } else {
+          const parts: string[] = []
+          const txTotal = r.trades_inserted + r.cash_inserted
+          if (txTotal) parts.push(`+${txTotal} tx`)
+          parts.push(`${r.positions_upserted} pos`)
+          if (r.positions_culled) parts.push(`-${r.positions_culled} closed`)
+          setRefreshMsg({ accountId: acc.id, text: parts.join(' · ') || 'Up to date', tone: 'ok' })
+          qc.invalidateQueries({ queryKey: ['transactions'] })
+          qc.invalidateQueries({ queryKey: ['holdings'] })
+          qc.invalidateQueries({ queryKey: ['accounts'] })
+        }
+      } else {
+        const r = await snapApi.syncAccount(acc.id)
+        if (r.rateLimited) {
+          setRefreshMsg({ accountId: acc.id, text: `Wait ${r.retryAfter}s`, tone: 'warn' })
+        } else {
+          const parts: string[] = []
+          if (r.activities_inserted) parts.push(`+${r.activities_inserted} tx`)
+          parts.push(`${r.positions_upserted} pos`)
+          if (r.positions_culled) parts.push(`-${r.positions_culled} closed`)
+          setRefreshMsg({ accountId: acc.id, text: parts.join(' · ') || 'Up to date', tone: 'ok' })
+          qc.invalidateQueries({ queryKey: ['transactions'] })
+          qc.invalidateQueries({ queryKey: ['holdings'] })
+          qc.invalidateQueries({ queryKey: ['accounts'] })
+        }
+      }
+    } catch (e) {
+      setRefreshMsg({ accountId: acc.id, text: String(e), tone: 'warn' })
+    } finally {
+      setRefreshingId(null)
+      setTimeout(() => setRefreshMsg(curr => curr?.accountId === acc.id ? null : curr), 3500)
+    }
+  }, [refreshingId, qc])
 
   const { data: accs = [] } = useQuery({
     queryKey: ['accounts'],
@@ -906,10 +678,7 @@ export function Accounts() {
 
   const updateColorMut = useMutation({
     mutationFn: ({ id, color }: { id: string; color: string }) => accountsApi.update(id, { color }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      setEditingColorId(null)
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
   })
 
   const renameMutation = useMutation({
@@ -922,10 +691,7 @@ export function Accounts() {
 
   const updateTypeMut = useMutation({
     mutationFn: ({ id, type }: { id: string; type: AccountType }) => accountsApi.update(id, { type }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      setEditingTypeId(null)
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
   })
 
   function startEdit(id: string, currentName: string) {
@@ -955,23 +721,23 @@ export function Accounts() {
         <SortableContext items={orderedIds} strategy={rectSortingStrategy}>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {orderedAccs.map(acc => {
-          const isLive = !!acc.snaptrade_account_id
+          const isLive = !!acc.snaptrade_account_id || acc.institution === 'Interactive Brokers'
           return (
             <SortableCard key={acc.id} id={acc.id}>{(dragHandle) => (
             <div
               className="group relative bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush p-5 hover:-translate-y-0.5 hover:shadow-lg transition-all duration-200"
-              onClick={() => { if (editingColorId === acc.id) setEditingColorId(null) }}
             >
               {editingId !== acc.id && (
-                <div className="absolute top-3 right-3 flex gap-1 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-3 right-3 flex gap-1 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity bg-surface/95 backdrop-blur-sm rounded-md px-1 py-0.5 shadow-sm">
                   {dragHandle}
                   {isLive && (
                     <button
-                      onClick={e => { e.stopPropagation(); setSyncAccount(acc) }}
-                      className="p-1 rounded hover:text-accent text-text-3"
-                      title="Sync transactions from broker"
+                      onClick={e => { e.stopPropagation(); refreshOne(acc) }}
+                      disabled={refreshingId === acc.id}
+                      className="p-1 rounded hover:text-accent text-text-3 disabled:opacity-50"
+                      title="Refresh now (positions, balances, recent activities)"
                     >
-                      <ArrowDownToLine size={13} />
+                      <RefreshCw size={13} className={refreshingId === acc.id ? 'animate-spin' : ''} />
                     </button>
                   )}
                   <button
@@ -992,43 +758,41 @@ export function Accounts() {
               )}
 
               <div className="flex items-center gap-3 mb-3">
-                <div className="relative flex-shrink-0">
-                  <button
-                    onClick={e => { e.stopPropagation(); setEditingColorId(editingColorId === acc.id ? null : acc.id) }}
-                    title="Change color"
-                    className="block"
-                  >
-                    <AccountTypeBadge type={acc.type} color={acc.color} />
-                  </button>
-                  {editingColorId === acc.id && (
-                    <div
-                      className="absolute top-full left-0 mt-1 z-20 bg-surface border border-border rounded-lg shadow-lg p-2"
-                      style={{ width: 148 }}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      onClick={e => e.stopPropagation()}
+                      title="Change color"
+                      className="block flex-shrink-0 rounded focus:outline-none"
+                    >
+                      <AccountTypeBadge type={acc.type} color={acc.color} />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 bg-surface border border-border rounded-lg shadow-lg p-2.5 w-[212px]"
                       onClick={e => e.stopPropagation()}
                     >
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                      <div className="grid grid-cols-6 gap-1.5">
                         {ACCENT_COLORS.map(c => (
                           <button
                             key={c}
                             onClick={() => updateColorMut.mutate({ id: acc.id, color: c })}
                             title={c}
+                            className="w-7 h-7 rounded-md transition-transform hover:scale-110 active:scale-95"
                             style={{
-                              width: 28, height: 28,
                               backgroundColor: c,
-                              borderRadius: 6,
                               outline: c === acc.color ? `2px solid ${c}` : '2px solid transparent',
-                              outlineOffset: 2,
-                              flexShrink: 0,
-                              transition: 'transform 0.1s',
+                              outlineOffset: 1,
                             }}
-                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
-                            onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
                           />
                         ))}
                       </div>
-                    </div>
-                  )}
-                </div>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
                 <div className="flex-1 min-w-0">
                   {editingId === acc.id ? (
                     <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
@@ -1058,43 +822,57 @@ export function Accounts() {
               </div>
 
               <div className="flex items-center justify-between">
-                {editingTypeId === acc.id ? (
-                  <select
-                    autoFocus
-                    defaultValue={ACCOUNT_TYPES.includes(acc.type as AccountType) ? acc.type : ''}
-                    onChange={e => {
-                      if (e.target.value) updateTypeMut.mutate({ id: acc.id, type: e.target.value as AccountType })
-                    }}
-                    onBlur={() => setEditingTypeId(null)}
-                    className="text-[11px] px-2 py-0.5 rounded-full border-0 focus:outline-none cursor-pointer"
-                    style={{ background: `${acc.color}20`, color: acc.color }}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      onClick={e => e.stopPropagation()}
+                      className="text-[11px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity data-[state=open]:ring-2 data-[state=open]:ring-offset-1 data-[state=open]:ring-offset-surface focus:outline-none"
+                      style={{
+                        background: `${acc.color}20`,
+                        color: acc.color,
+                        ['--tw-ring-color' as string]: acc.color,
+                      } as React.CSSProperties}
+                      title="Click to change account type"
+                    >
+                      {acc.type}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      align="start"
+                      sideOffset={6}
+                      className="z-50 bg-surface border border-border rounded-lg shadow-lg py-1 min-w-[120px]"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      {ACCOUNT_TYPES.map(t => (
+                        <DropdownMenu.Item
+                          key={t}
+                          onSelect={() => updateTypeMut.mutate({ id: acc.id, type: t as AccountType })}
+                          className={cn(
+                            'text-[11.5px] px-3 py-1.5 transition-colors cursor-pointer outline-none',
+                            t === acc.type
+                              ? 'font-semibold'
+                              : 'text-text-2 data-[highlighted]:bg-surface-2 data-[highlighted]:text-text'
+                          )}
+                          style={t === acc.type ? { color: acc.color, background: `${acc.color}12` } : undefined}
+                        >
+                          {t}
+                        </DropdownMenu.Item>
+                      ))}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                {isLive && (
+                  <span
+                    className="flex items-center gap-1 text-[10px] text-up font-medium"
+                    title={acc.last_synced_at
+                      ? `Last synced ${formatRelativeTime(acc.last_synced_at)}`
+                      : 'Not yet synced — click ↻ to refresh'}
                   >
-                    {!ACCOUNT_TYPES.includes(acc.type as AccountType) && (
-                      <option value="">{acc.type}</option>
-                    )}
-                    {ACCOUNT_TYPES.map(t => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <button
-                    onClick={() => setEditingTypeId(acc.id)}
-                    className="text-[11px] px-2 py-0.5 rounded-full hover:opacity-80 transition-opacity"
-                    style={{ background: `${acc.color}20`, color: acc.color }}
-                    title="Click to change account type"
-                  >
-                    {acc.type}
-                  </button>
+                    <Wifi size={10} />
+                    {acc.last_synced_at ? `Synced ${formatRelativeShort(acc.last_synced_at)}` : 'Live'}
+                  </span>
                 )}
-                <div className="flex items-center gap-1.5">
-                  {isLive && (
-                    <span className="flex items-center gap-0.5 text-[10px] text-up font-medium">
-                      <Wifi size={10} />
-                      Live
-                    </span>
-                  )}
-                  <span className="text-[11px] text-text-3 tabular">{acc.number}</span>
-                </div>
               </div>
 
               {(valueByAccount[acc.id]?.value ?? 0) > 0.01 && (
@@ -1110,6 +888,17 @@ export function Accounts() {
                       </span>
                     </p>
                   </div>
+                </div>
+              )}
+
+              {refreshMsg?.accountId === acc.id && (
+                <div
+                  className={cn(
+                    'absolute bottom-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[10px] font-medium shadow-md pointer-events-none tabular animate-in fade-in slide-in-from-bottom-1 duration-200',
+                    refreshMsg.tone === 'ok' ? 'bg-up text-white' : 'bg-warn text-white'
+                  )}
+                >
+                  {refreshMsg.text}
                 </div>
               )}
             </div>
@@ -1134,9 +923,6 @@ export function Accounts() {
       )}
 
       <AddAccountModal open={addOpen} onClose={() => setAddOpen(false)} existingAccounts={accs} />
-      {syncAccount && (
-        <SyncModal account={syncAccount} open={true} onClose={() => setSyncAccount(null)} />
-      )}
       {deleteTarget && (
         <DeleteConfirmDialog
           account={deleteTarget}

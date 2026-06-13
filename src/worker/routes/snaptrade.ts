@@ -3,8 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { Env } from '../types'
 import { createSnapClient } from '../lib/snaptrade'
-import type { SnapUser, SnapActivity } from '../lib/snaptrade'
-import type { TxType, AssetKind } from '../../shared/types'
+import type { SnapUser } from '../lib/snaptrade'
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -306,181 +305,6 @@ app.get('/activities', async (c) => {
   return c.json(data)
 })
 
-// ── Transaction sync helpers ──────────────────────────────────
-
-const SNAP_TO_TX_TYPE: Record<string, TxType> = {
-  BUY: 'buy', SELL: 'sell',
-  DIVIDEND: 'dividend', DIV: 'dividend', DIVIDENDS: 'dividend',
-  REINVEST_DIVIDEND: 'buy', REINVEST: 'buy',
-  INTEREST: 'interest',
-  DEPOSIT: 'deposit', CONTRIBUTION: 'deposit',
-  WITHDRAWAL: 'withdraw', WITHDRAW: 'withdraw',
-  TRANSFER: 'transfer', TRANSFER_IN: 'transfer_in', TRANSFER_OUT: 'transfer_out',
-  FEE: 'deposit',
-}
-
-function snapToTxType(type: string): TxType {
-  return SNAP_TO_TX_TYPE[type.toUpperCase()] ?? 'deposit'
-}
-
-function snapToKind(a: SnapActivity): AssetKind | null {
-  if (!a.symbol) return null
-  const t = (a.symbol.symbol.type?.name ?? '').toLowerCase()
-  if (t.includes('etf') || t.includes('exchange traded')) return 'etf'
-  if (t.includes('crypto')) return 'crypto'
-  if (t.includes('mutual')) return 'mutual_fund'
-  if (t.includes('option')) return 'option'
-  return 'stock'
-}
-
-function matchKey(date: string, symbol: string | null, qty: number): string {
-  // Round qty to nearest 0.001 to absorb fractional-share rounding
-  return `${date}|${(symbol ?? '').toUpperCase()}|${Math.round(qty * 1000)}`
-}
-
-// ── Sync: compare broker activities vs D1 transactions ────────
-
-app.get('/sync-preview', async (c) => {
-  const accountId = c.req.query('accountId')
-  const startDate = c.req.query('startDate')
-  const endDate   = c.req.query('endDate')
-  if (!accountId) return c.json({ error: 'accountId required' }, 400)
-
-  try {
-    const acc = await c.env.DB
-      .prepare('SELECT id, snaptrade_account_id FROM accounts WHERE id = ?')
-      .bind(accountId)
-      .first<{ id: string; snaptrade_account_id: string | null }>()
-    if (!acc?.snaptrade_account_id) return c.json({ error: 'Account not linked to SnapTrade' }, 400)
-
-    const user = await requireUser(c.env.DB)
-    const cl   = client(c.env)
-
-    // Try per-account endpoint first; fall back to global
-    let snapActs: SnapActivity[]
-    try {
-      snapActs = await cl.getAccountActivities(user, acc.snaptrade_account_id, startDate, endDate)
-    } catch {
-      const all = await cl.getActivities(user, startDate, endDate, acc.snaptrade_account_id)
-      snapActs = all.filter(a => a.account.id === acc.snaptrade_account_id)
-    }
-
-    // Fetch D1 transactions for this account in the date range
-    const from = startDate ?? '1900-01-01'
-    const to   = endDate   ?? '9999-12-31'
-    const { results: d1Txs = [] } = await c.env.DB
-      .prepare('SELECT id, tx_date, type, symbol, qty, total FROM transactions WHERE account_id = ? AND tx_date >= ? AND tx_date <= ? ORDER BY tx_date DESC')
-      .bind(accountId, from, to)
-      .all<{ id: string; tx_date: string; type: string; symbol: string | null; qty: number | null; total: number }>()
-
-    // Build D1 lookup — keyed by date+symbol+roundedQty
-    const d1Map = new Map<string, string>() // key → tx id
-    for (const tx of d1Txs) {
-      const k = matchKey(tx.tx_date, tx.symbol, Math.abs(tx.qty ?? 0))
-      if (!d1Map.has(k)) d1Map.set(k, tx.id)
-    }
-
-    const matchedD1Ids = new Set<string>()
-
-    const activities = snapActs.map(a => {
-      const date   = (a.trade_date ?? a.settlement_date ?? '').slice(0, 10)
-      const symbol = a.symbol?.symbol?.symbol ?? null
-      const qty    = Math.abs(a.units)
-      const total  = Math.abs(a.amount)
-      const k      = matchKey(date, symbol, qty)
-      const d1Id   = d1Map.get(k) ?? null
-      const matched = d1Id !== null && !matchedD1Ids.has(d1Id)
-      if (matched && d1Id) matchedD1Ids.add(d1Id)
-
-      return {
-        id:          a.id,
-        date,
-        type:        a.type,
-        txType:      snapToTxType(a.type),
-        symbol,
-        qty,
-        price:       a.price,
-        total,
-        currency:    a.currency,
-        description: a.description,
-        matched,
-        matchedTxId: matched ? d1Id : null,
-      }
-    })
-
-    const d1Only = d1Txs
-      .filter(tx => !matchedD1Ids.has(tx.id))
-      .map(tx => ({ id: tx.id, date: tx.tx_date, type: tx.type, symbol: tx.symbol, qty: tx.qty, total: tx.total }))
-
-    return c.json({ activities, d1Only })
-  } catch (e) {
-    console.error('sync-preview error:', e)
-    return c.json({ error: String(e) }, 500)
-  }
-})
-
-// ── Sync: import selected broker activities as transactions ────
-
-app.post(
-  '/sync-import',
-  zValidator('json', z.object({
-    accountId:   z.string(),
-    activityIds: z.array(z.string()),
-    startDate:   z.string().optional(),
-    endDate:     z.string().optional(),
-  })),
-  async (c) => {
-    try {
-      const { accountId, activityIds, startDate, endDate } = c.req.valid('json')
-
-      const acc = await c.env.DB
-        .prepare('SELECT id, snaptrade_account_id FROM accounts WHERE id = ?')
-        .bind(accountId)
-        .first<{ id: string; snaptrade_account_id: string | null }>()
-      if (!acc?.snaptrade_account_id) return c.json({ error: 'Account not linked' }, 400)
-
-      const user = await requireUser(c.env.DB)
-      const cl = client(c.env)
-      let allActs: SnapActivity[]
-      try {
-        allActs = await cl.getAccountActivities(user, acc.snaptrade_account_id, startDate, endDate)
-      } catch {
-        allActs = await cl.getActivities(user, startDate, endDate, acc.snaptrade_account_id)
-      }
-      const toImport = allActs.filter(a =>
-        activityIds.includes(a.id)
-      )
-
-      const newId = () => `tx_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
-      let imported = 0
-
-      for (const a of toImport) {
-        const date = (a.trade_date ?? a.settlement_date ?? '').slice(0, 10)
-        if (!date) continue
-        await c.env.DB
-          .prepare(`INSERT INTO transactions (id, tx_date, account_id, type, symbol, kind, qty, price, total, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(
-            newId(), date, accountId,
-            snapToTxType(a.type),
-            a.symbol?.symbol?.symbol ?? null,
-            snapToKind(a),
-            a.units !== 0 ? Math.abs(a.units) : null,
-            a.price !== 0 ? a.price : null,
-            Math.abs(a.amount),
-            a.description || null,
-          )
-          .run()
-        imported++
-      }
-
-      return c.json({ ok: true, imported })
-    } catch (e) {
-      console.error('sync-import error:', e)
-      return c.json({ error: String(e) }, 500)
-    }
-  },
-)
-
 // ── Debug: dump raw SnapTrade activities for an account ───────
 app.get('/debug-positions', async (c) => {
   const d1AccountId = c.req.query('accountId')
@@ -545,6 +369,91 @@ app.get('/debug-activities', async (c) => {
   } catch (e) {
     return c.json({ error: String(e), snapAccountId: acct.snaptrade_account_id, startDate, endDate }, 500)
   }
+})
+
+// ── Unified sync: persisted SnapTrade data in D1 ─────────────────
+// POST /api/snaptrade/sync/:accountId
+//   ?full=1               → no startDate (fetch full available history)
+//   ?since=YYYY-MM-DD     → fetch activities from this date forward
+//   ?skipActivities=1     → only positions + balances
+//   Returns { activities_inserted, positions_upserted, positions_culled,
+//             balances_upserted, errors, retry_after? }
+
+app.post('/sync/:accountId', async (c) => {
+  const { syncAccount, tryClaimSync } = await import('../lib/sync')
+
+  const d1AccountId = c.req.param('accountId')
+  const acct = await c.env.DB
+    .prepare('SELECT snaptrade_account_id FROM accounts WHERE id = ?')
+    .bind(d1AccountId)
+    .first<{ snaptrade_account_id: string | null }>()
+
+  if (!acct?.snaptrade_account_id)
+    return c.json({ error: 'Account not linked to SnapTrade' }, 400)
+
+  const claim = await tryClaimSync(c.env.DB, d1AccountId)
+  if (!claim.allowed) {
+    return c.json({ error: 'rate-limited', retry_after: claim.retryAfter }, 429)
+  }
+
+  const snapUser = await getStoredUser(c.env.DB)
+  if (!snapUser) return c.json({ error: 'No SnapTrade user' }, 400)
+
+  const snap = client(c.env)
+  const full = c.req.query('full') === '1'
+  const since = c.req.query('since')
+  const skipActivities = c.req.query('skipActivities') === '1'
+
+  const result = await syncAccount(
+    c.env.DB, snap, snapUser, d1AccountId, acct.snaptrade_account_id,
+    { activitiesStartDate: full ? undefined : (since ?? new Date(Date.now() - 365*86400_000).toISOString().slice(0, 10)), skipActivities }
+  )
+  return c.json(result)
+})
+
+// ── Verification: persisted vs. live activities ──────────────────
+// GET /api/snaptrade/sync-verify/:accountId
+//   Hits SnapTrade live for activities + compares to what's persisted in D1.
+//   Reports counts and any external_ids missing on either side. Used to
+//   validate the sync before flipping the read path off the live merge.
+
+app.get('/sync-verify/:accountId', async (c) => {
+  const d1AccountId = c.req.param('accountId')
+  const startDate = c.req.query('startDate') ?? new Date(Date.now() - 365*86400_000).toISOString().slice(0, 10)
+  const endDate   = c.req.query('endDate') ?? new Date().toISOString().slice(0, 10)
+
+  const acct = await c.env.DB
+    .prepare('SELECT snaptrade_account_id FROM accounts WHERE id = ?')
+    .bind(d1AccountId)
+    .first<{ snaptrade_account_id: string | null }>()
+  if (!acct?.snaptrade_account_id) return c.json({ error: 'Account not linked' }, 400)
+
+  const snapUser = await getStoredUser(c.env.DB)
+  if (!snapUser) return c.json({ error: 'No SnapTrade user' }, 400)
+
+  const snap = client(c.env)
+  const live = await snap.getAccountActivities(snapUser, acct.snaptrade_account_id, startDate, endDate)
+  const liveIds = new Set(live.map(a => a.id))
+
+  const persisted = await c.env.DB
+    .prepare(`SELECT external_id FROM transactions
+              WHERE account_id = ? AND source = 'snaptrade'
+                AND tx_date >= ? AND tx_date <= ?`)
+    .bind(d1AccountId, startDate, endDate)
+    .all<{ external_id: string }>()
+  const persistedIds = new Set((persisted.results ?? []).map(r => r.external_id))
+
+  const missingInD1   = [...liveIds].filter(id => !persistedIds.has(id))
+  const extraInD1     = [...persistedIds].filter(id => !liveIds.has(id))
+
+  return c.json({
+    live_count:       live.length,
+    persisted_count:  persistedIds.size,
+    missing_in_d1:    missingInD1.slice(0, 20),
+    missing_in_d1_n:  missingInD1.length,
+    extra_in_d1:      extraInD1.slice(0, 20),
+    extra_in_d1_n:    extraInD1.length,
+  })
 })
 
 export default app

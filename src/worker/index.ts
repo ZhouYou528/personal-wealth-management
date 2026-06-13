@@ -13,6 +13,8 @@ import recurringRoutes    from './routes/recurring'
 import allocationRoutes   from './routes/allocation'
 import creditCardsRoutes  from './routes/creditcards'
 import snaptradeRoutes    from './routes/snaptrade'
+import ibkrFlexRoutes     from './routes/ibkrflex'
+import sentimentRoutes    from './routes/sentiment'
 import * as q             from './db/queries'
 
 // Constant-time string comparison to prevent timing attacks
@@ -57,6 +59,8 @@ const api = new Hono<{ Bindings: Env }>()
   .route('/allocation',   allocationRoutes)
   .route('/credit-cards', creditCardsRoutes)
   .route('/snaptrade',    snaptradeRoutes)
+  .route('/ibkr-flex',    ibkrFlexRoutes)
+  .route('/sentiment',    sentimentRoutes)
 
 // GET /api/events — upcoming calendar events
 api.get('/events', async (c) => {
@@ -113,17 +117,20 @@ async function fetchPortfolioValues(env: Env): Promise<{
   const { computeHoldings } = await import('./lib/positions')
   const { isCrypto, fetchFinnhubQuote, fetchCoinGeckoQuote } = await import('./lib/market')
 
-  // Determine which D1 accounts are SnapTrade-linked
-  const allAccounts = await env.DB
-    .prepare('SELECT id, snaptrade_account_id FROM accounts')
-    .all<{ id: string; snaptrade_account_id: string | null }>()
-  const reverseMap = new Map<string, string>() // snap_account_id → d1_id
-  const linkedD1Ids = new Set<string>()
+  // "Broker-managed" accounts: their holdings come from the persisted
+  // snaptrade_positions/snaptrade_balances tables (sourced by either SnapTrade
+  // cron or IBKR Flex). D1-computed holdings are skipped for these accounts.
+  const [allAccounts, brokerManagedRows] = await Promise.all([
+    env.DB.prepare('SELECT id, snaptrade_account_id FROM accounts')
+      .all<{ id: string; snaptrade_account_id: string | null }>(),
+    env.DB.prepare('SELECT DISTINCT account_id FROM snaptrade_positions')
+      .all<{ account_id: string }>(),
+  ])
+  const linkedD1Ids = new Set<string>(
+    (brokerManagedRows.results ?? []).map(r => r.account_id)
+  )
   for (const a of allAccounts.results ?? []) {
-    if (a.snaptrade_account_id) {
-      reverseMap.set(a.snaptrade_account_id, a.id)
-      linkedD1Ids.add(a.id)
-    }
+    if (a.snaptrade_account_id) linkedD1Ids.add(a.id)
   }
 
   const [transactions, marks] = await Promise.all([
@@ -168,69 +175,77 @@ async function fetchPortfolioValues(env: Env): Promise<{
     aggregate += v
   }
 
-  // ── SnapTrade live account positions ──────────────────────────
-  if (reverseMap.size > 0) {
-    const snapUser = await env.DB
-      .prepare('SELECT snaptrade_user_id, user_secret FROM snaptrade_users WHERE id = ?')
-      .bind('singleton')
-      .first<{ snaptrade_user_id: string; user_secret: string }>()
+  // ── SnapTrade positions/balances: read from persisted snapshot ─
+  // Cron keeps snaptrade_positions/balances fresh; no SnapTrade roundtrip here.
+  if (linkedD1Ids.size > 0) {
+    const persistedPositions = await env.DB
+      .prepare(`SELECT account_id, symbol, qty, market_price, kind, multiplier
+                FROM snaptrade_positions
+                WHERE kind != 'option'`)  // options already counted from D1
+      .all<{ account_id: string; symbol: string; qty: number; market_price: number | null; kind: string; multiplier: number }>()
 
-    if (snapUser) {
-      const { createSnapClient } = await import('./lib/snaptrade')
-      const snap = createSnapClient(env.SNAPTRADE_CLIENT_ID, env.SNAPTRADE_CONSUMER_KEY)
-      const userAuth = { userId: snapUser.snaptrade_user_id, userSecret: snapUser.user_secret }
-
-      for (const [snapAccId, d1Id] of reverseMap) {
-        try {
-          const [unified, balances] = await Promise.all([
-            snap.getAccountAllPositions(userAuth, snapAccId),
-            snap.getAccountBalances(userAuth, snapAccId),
-          ])
-
-          let snapValue = 0
-          for (const pos of unified) {
-            const instrKind = (pos.instrument?.kind ?? '').toLowerCase()
-            if (instrKind === 'option') continue  // already counted from D1
-            const qty = Number(pos.units) || 0
-            const sym = pos.instrument?.symbol
-            if (!sym || !qty) continue
-            // Prefer broker's live price; fall back to KV cache then Finnhub
-            let price: number | null = pos.price != null ? Number(pos.price) : null
-            if (price == null) {
-              const cached = await env.PRICE_CACHE.get(`quote:${sym}`, 'json') as { price: number } | null
-              price = cached?.price ?? null
-              if (price == null) {
-                const fetched = isCrypto(sym)
-                  ? await fetchCoinGeckoQuote(sym, env.COINGECKO_KEY)
-                  : await fetchFinnhubQuote(sym, env.FINNHUB_KEY)
-                price = fetched?.price ?? null
-              }
-            }
-            if (price != null) snapValue += qty * price
-          }
-          for (const bal of balances) {
-            if ((bal.cash ?? 0) > 0) snapValue += bal.cash
-          }
-
-          byAccount[d1Id] = (byAccount[d1Id] ?? 0) + snapValue
-          aggregate += snapValue
-        } catch (e) {
-          console.error(`SnapTrade NAV fetch failed for ${snapAccId}:`, e)
+    for (const p of persistedPositions.results ?? []) {
+      if (!linkedD1Ids.has(p.account_id)) continue
+      let price = p.market_price ?? null
+      if (price == null) {
+        const cached = await env.PRICE_CACHE.get(`quote:${p.symbol}`, 'json') as { price: number } | null
+        price = cached?.price ?? null
+        if (price == null) {
+          const fetched = isCrypto(p.symbol)
+            ? await fetchCoinGeckoQuote(p.symbol, env.COINGECKO_KEY)
+            : await fetchFinnhubQuote(p.symbol, env.FINNHUB_KEY)
+          price = fetched?.price ?? null
         }
       }
+      if (price == null) continue
+      const v = p.qty * price * (p.multiplier ?? 1)
+      byAccount[p.account_id] = (byAccount[p.account_id] ?? 0) + v
+      aggregate += v
+    }
+
+    const persistedBalances = await env.DB
+      .prepare('SELECT account_id, cash FROM snaptrade_balances')
+      .all<{ account_id: string; cash: number }>()
+    for (const b of persistedBalances.results ?? []) {
+      if (!linkedD1Ids.has(b.account_id) || b.cash <= 0) continue
+      byAccount[b.account_id] = (byAccount[b.account_id] ?? 0) + b.cash
+      aggregate += b.cash
     }
   }
 
   return { byAccount, aggregate }
 }
 
-// Daily 22:00 UTC — fire recurring transactions then write end-of-day snapshot (snap_hour=23).
+// Daily 22:00 UTC — fire recurring transactions, sync SnapTrade activities,
+// then write end-of-day snapshot (snap_hour=23).
 async function runDailySnapshot(env: Env): Promise<void> {
   try {
     const { fireAllRules } = await import('./lib/recurring')
     await fireAllRules(env.DB)
   } catch (e) {
     console.error('fireAllRules failed:', e)
+  }
+
+  try {
+    const { syncAllLinkedAccounts } = await import('./lib/sync')
+    const r = await syncAllLinkedAccounts(env, 'activities')
+    console.log('daily activities sync:', r)
+  } catch (e) {
+    console.error('syncAllLinkedAccounts(activities) failed:', e)
+  }
+
+  // IBKR Flex pull — full trades/cash/positions for both IBKR accounts
+  if (env.IBKR_FLEX_TOKEN && env.IBKR_FLEX_QUERY_ID) {
+    try {
+      const { syncIbkrFlex } = await import('./lib/ibkr-flex')
+      const r = await syncIbkrFlex(env.DB, {
+        token: env.IBKR_FLEX_TOKEN,
+        queryId: env.IBKR_FLEX_QUERY_ID,
+      })
+      console.log('daily IBKR Flex sync:', r)
+    } catch (e) {
+      console.error('IBKR Flex sync failed:', e)
+    }
   }
 
   const { byAccount, aggregate } = await fetchPortfolioValues(env)
@@ -242,8 +257,16 @@ async function runDailySnapshot(env: Env): Promise<void> {
   ])
 }
 
-// Intraday every 30 min during market hours (14-20 UTC Mon-Fri) — snapshot only, no recurring.
+// Intraday every 30 min during market hours (14-20 UTC Mon-Fri) —
+// sync positions+balances from SnapTrade, then write snapshot.
 async function runIntradaySnapshot(env: Env): Promise<void> {
+  try {
+    const { syncAllLinkedAccounts } = await import('./lib/sync')
+    await syncAllLinkedAccounts(env, 'positions-balances')
+  } catch (e) {
+    console.error('syncAllLinkedAccounts(positions-balances) failed:', e)
+  }
+
   const { byAccount, aggregate } = await fetchPortfolioValues(env)
   const now = new Date()
   const today = now.toISOString().split('T')[0]

@@ -13,16 +13,38 @@ import {
   sumRealizedInRange,
 } from '@shared/insights'
 
-const TRADE_TYPES = ['buy','sell','buy_option','sell_option','buy_crypto','sell_crypto','transfer_in','transfer_out'] as const
-const TRADE_META: Record<string, { label: string; color: string }> = {
-  buy:          { label: 'Stock buy',    color: '#10B981' },
-  sell:         { label: 'Stock sell',   color: '#EF4444' },
-  buy_option:   { label: 'Option buy',   color: '#F59E0B' },
-  sell_option:  { label: 'Option sell',  color: '#8B5CF6' },
-  buy_crypto:   { label: 'Crypto buy',   color: '#F97316' },
-  sell_crypto:  { label: 'Crypto sell',  color: '#EF4444' },
-  transfer_in:  { label: 'Transfer in',  color: '#6B7280' },
-  transfer_out: { label: 'Transfer out', color: '#6B7280' },
+const TRADE_BUCKETS = ['stock_buy','stock_sell','option_buy','option_sell','crypto_buy','crypto_sell'] as const
+type TradeBucket = typeof TRADE_BUCKETS[number]
+const TRADE_META: Record<TradeBucket, { label: string; color: string }> = {
+  stock_buy:    { label: 'Stock buy',    color: '#10B981' },
+  stock_sell:   { label: 'Stock sell',   color: '#EF4444' },
+  option_buy:   { label: 'Option buy',   color: '#F59E0B' },
+  option_sell:  { label: 'Option sell',  color: '#8B5CF6' },
+  crypto_buy:   { label: 'Crypto buy',   color: '#F97316' },
+  crypto_sell:  { label: 'Crypto sell',  color: '#EC4899' },
+}
+
+// Categorize a transaction into one of the 6 trade buckets, or null to exclude.
+// Maps SnapTrade buy/sell + kind (option/crypto) AND manual typed forms to the same bucket.
+// Excludes cash/forex conversions (e.g. IBKR's USD.CAD swaps) — those aren't trades.
+function tradeBucketFor(tx: { type: string; kind?: string | null }): TradeBucket | null {
+  if (tx.kind === 'cash') return null
+  const t = tx.type
+  if (t === 'buy_option')  return 'option_buy'
+  if (t === 'sell_option') return 'option_sell'
+  if (t === 'buy_crypto')  return 'crypto_buy'
+  if (t === 'sell_crypto') return 'crypto_sell'
+  if (t === 'buy') {
+    if (tx.kind === 'option') return 'option_buy'
+    if (tx.kind === 'crypto') return 'crypto_buy'
+    return 'stock_buy'
+  }
+  if (t === 'sell') {
+    if (tx.kind === 'option') return 'option_sell'
+    if (tx.kind === 'crypto') return 'crypto_sell'
+    return 'stock_sell'
+  }
+  return null
 }
 
 export function Insights() {
@@ -65,19 +87,19 @@ export function Insights() {
 
   // Trade counts for the selected broker + current year
   const activityStats = useMemo(() => {
-    const filtered = txs.filter(tx =>
-      tx.tx_date >= yearStart &&
-      tx.tx_date <= yearEnd &&
-      TRADE_TYPES.includes(tx.type as typeof TRADE_TYPES[number]) &&
-      (brokerAccIds === null || brokerAccIds.has(tx.account_id))
-    )
-    const counts: Record<string, number> = {}
-    for (const tx of filtered) {
-      counts[tx.type] = (counts[tx.type] ?? 0) + 1
+    const counts: Record<TradeBucket, number> = {
+      stock_buy: 0, stock_sell: 0, option_buy: 0, option_sell: 0, crypto_buy: 0, crypto_sell: 0,
+    }
+    for (const tx of txs) {
+      if (tx.tx_date < yearStart || tx.tx_date > yearEnd) continue
+      if (brokerAccIds !== null && !brokerAccIds.has(tx.account_id)) continue
+      const bucket = tradeBucketFor(tx)
+      if (!bucket) continue
+      counts[bucket]++
     }
     const total = Object.values(counts).reduce((s, n) => s + n, 0)
-    const rows = TRADE_TYPES
-      .map(t => ({ type: t, count: counts[t] ?? 0, ...TRADE_META[t] }))
+    const rows = TRADE_BUCKETS
+      .map(t => ({ type: t, count: counts[t], ...TRADE_META[t] }))
       .filter(r => r.count > 0)
     return { total, rows }
   }, [txs, yearStart, yearEnd, brokerAccIds])
