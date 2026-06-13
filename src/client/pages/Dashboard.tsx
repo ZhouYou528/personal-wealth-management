@@ -791,38 +791,40 @@ function SentimentCard({ title, sub, loading, metric, tone, precision, deltaSuff
   deltaSuffix: string
 }) {
   return (
-    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-3.5 sm:px-5 py-3 sm:py-4 min-w-0">
-      <p className="text-micro text-text-3 uppercase tracking-widest truncate">{title}</p>
-      <p className="text-[10px] text-text-3 truncate mt-0.5">{sub}</p>
+    <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-5 py-3.5 sm:py-4 min-w-0">
+      <div className="flex items-baseline justify-between mb-1">
+        <p className="text-micro text-text-3 uppercase tracking-widest">{title}</p>
+        <p className="text-[10px] text-text-3 truncate ml-2">{sub}</p>
+      </div>
 
       {loading ? (
-        <div className="h-[34px] sm:h-[42px] bg-surface-2 rounded animate-pulse mt-2" />
+        <div className="h-[44px] sm:h-[52px] bg-surface-2 rounded animate-pulse" />
       ) : metric == null ? (
         <p className="text-small text-text-3 mt-2">Unavailable</p>
       ) : (
         <>
           <p className={cn(
-            'tabular font-bold text-[26px] sm:text-[34px] leading-none tracking-tight mt-1.5',
+            'tabular font-bold text-[30px] sm:text-[36px] leading-none tracking-tight mt-0.5',
             TONE_TEXT[tone]
           )}>
             {metric.value.toFixed(precision)}
           </p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
+          <div className="flex items-center justify-between mt-2">
             <span className={cn(
-              'inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap',
+              'inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold',
               TONE_CHIP[tone]
             )}>
               {metric.label}
             </span>
             {Math.abs(metric.change) >= 0.01 && (
-              <span className="flex items-center gap-0.5 text-[10.5px] text-text-3 whitespace-nowrap">
+              <span className="flex items-center gap-0.5 text-[11px] text-text-3">
                 {metric.change >= 0
-                  ? <TrendingUp size={10} className="text-up" />
-                  : <TrendingDown size={10} className="text-down" />}
+                  ? <TrendingUp size={11} className="text-up" />
+                  : <TrendingDown size={11} className="text-down" />}
                 <span className={cn('tabular', metric.change >= 0 ? 'text-up' : 'text-down')}>
                   {metric.change >= 0 ? '+' : ''}{metric.change.toFixed(precision)}
                 </span>
-                <span className="hidden sm:inline ml-0.5">{deltaSuffix}</span>
+                <span>{deltaSuffix}</span>
               </span>
             )}
           </div>
