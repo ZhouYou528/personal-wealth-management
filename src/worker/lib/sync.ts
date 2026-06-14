@@ -12,6 +12,7 @@
 
 import type { TxType, AssetKind } from '@shared/types'
 import { createSnapClient, type SnapActivity, type SnapUser, type SnapUnifiedPosition, type SnapBalance } from './snaptrade'
+import { isEtfSymbol, isMutualFundSymbol } from '../../shared/etf-list'
 
 export const REFRESH_DEBOUNCE_S = 60
 
@@ -182,12 +183,18 @@ export async function syncPositions(
 
   const batch: D1PreparedStatement[] = []
   for (const p of positions) {
-    const kind = instrumentKindToAssetKind(p.instrument?.kind)
+    let kind = instrumentKindToAssetKind(p.instrument?.kind)
     const isOption = kind === 'option'
     const sym = isOption
       ? (p.instrument?.underlying?.symbol ?? p.instrument?.symbol ?? null)
       : (p.instrument?.symbol ?? p.instrument?.raw_symbol ?? null)
     if (!sym) continue
+    // Symbol-based overrides for cases where SnapTrade reports the wrong
+    // instrument kind (e.g. 401k target-date funds reported as "stock").
+    if (kind === 'stock') {
+      if (isMutualFundSymbol(sym)) kind = 'mutual_fund'
+      else if (isEtfSymbol(sym))   kind = 'etf'
+    }
 
     const optType = isOption
       ? ((p.instrument?.option_type ?? '').toLowerCase() === 'put' ? 'put' : 'call')

@@ -12,6 +12,11 @@ import type { Goal } from '@shared/types'
 const GOAL_COLORS = ['#10B981', '#3B82F6', '#7C3AED', '#F97316', '#F59E0B', '#EC4899']
 const GOAL_ICONS  = ['🎯', '🏠', '🚗', '✈️', '📚', '💍', '🏦', '💰', '🌴', '🎓']
 
+// Shared base style for the three Remaining/Monthly/Deadline value cells.
+// Using an explicit text-[12px] (not text-small) to lock the size — guarantees
+// the three columns can never drift due to class inheritance or specificity.
+const STATS_VAL = 'tabular text-[12px] leading-tight font-medium'
+
 /** Sum the value of all holdings in the given accounts.
  *  Uses live market price × qty × multiplier. */
 function liveValueForAccounts(
@@ -284,16 +289,17 @@ export function Goals() {
                 </p>
               </div>
 
-              {/* Stats footer */}
+              {/* Stats footer — all three values share the same baseline style
+                  via STATS_VAL so they can't drift apart by accident. */}
               <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border">
                 <div>
                   <p className="text-micro text-text-3 uppercase">Remaining</p>
-                  <p className="tabular text-small font-medium text-text private-val">{fmt(remaining)}</p>
+                  <p className={cn(STATS_VAL, 'text-text private-val')}>{fmt(remaining)}</p>
                 </div>
                 <div>
                   <p className="text-micro text-text-3 uppercase">Monthly</p>
                   <p className={cn(
-                    'tabular text-small font-medium',
+                    STATS_VAL,
                     monthlyText === 'Overdue' ? 'text-down' : 'text-text',
                     monthlyText !== 'Overdue' && monthlyText !== '—' && 'private-val'
                   )}>
@@ -302,7 +308,7 @@ export function Goals() {
                 </div>
                 <div>
                   <p className="text-micro text-text-3 uppercase">Deadline</p>
-                  <p className={cn('text-small font-medium', monthsLeft < 0 ? 'text-down' : 'text-text')}>
+                  <p className={cn(STATS_VAL, monthsLeft < 0 ? 'text-down' : 'text-text')}>
                     {deadlineText}
                   </p>
                 </div>

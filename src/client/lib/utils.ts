@@ -38,7 +38,8 @@ export function fmtMoney(value: number, currency = 'USD', compact = false): stri
   return new Intl.NumberFormat('en-CA', opts).format(value)
 }
 
-export function fmtPct(value: number, digits = 2): string {
+export function fmtPct(value: number | null | undefined, digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return '—'
   const sign = value > 0 ? '+' : ''
   return `${sign}${value.toFixed(digits)}%`
 }

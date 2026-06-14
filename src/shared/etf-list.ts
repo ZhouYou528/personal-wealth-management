@@ -16,3 +16,19 @@ export function isEtfSymbol(symbol: string | null | undefined): boolean {
   if (!symbol) return false
   return ETF_SYMBOLS.has(symbol.toUpperCase())
 }
+
+// 401k / pension plan target-date funds and CITs — these don't have intraday
+// prices, so they must be tagged `mutual_fund` to bypass live-quote lookup.
+// Plan-specific tickers (like Fidelity's "O24K" alias for Vanguard 2060) live
+// here too since SnapTrade reports them as generic "stock".
+export const MUTUAL_FUND_SYMBOLS = new Set([
+  'O24K',              // Vanguard Target Retirement 2060 (Fidelity 401k alias)
+  'BLKLP2060',         // BlackRock LifePath 2060 (Fidelity 401k alias)
+  'VTTSX','VFFVX','VTHRX','VFORX','VTIVX','VTWNX','VTXVX','VTRRX',  // Vanguard Target Retirement series
+  'LIPKX','LIPLX','LIPMX','LIPNX','LIPOX','LIPPX',                  // BlackRock LifePath series
+])
+
+export function isMutualFundSymbol(symbol: string | null | undefined): boolean {
+  if (!symbol) return false
+  return MUTUAL_FUND_SYMBOLS.has(symbol.toUpperCase())
+}

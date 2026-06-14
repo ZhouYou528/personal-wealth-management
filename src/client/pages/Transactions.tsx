@@ -142,7 +142,7 @@ export function Transactions() {
 
       {/* Global account-filter pills — visible across Dashboard/Holdings/Transactions */}
       {accs.length > 1 && (
-        <div className="flex gap-1.5 flex-wrap mb-4">
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap mb-4">
           <AccountPill
             active={selectedAccountId == null}
             onClick={() => setSelectedAccountId(null)}
@@ -397,7 +397,7 @@ function AccountPill({ active, onClick, label, color }: {
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150',
+        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150 whitespace-nowrap flex-shrink-0',
         active
           ? 'bg-accent-soft text-accent'
           : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'

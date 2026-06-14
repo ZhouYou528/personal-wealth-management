@@ -10,6 +10,9 @@ import type { Holding, Quote, AssetKind } from '@shared/types'
 const SYMBOL_NAMES: Record<string, string> = {
   CASH: 'Cash', BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana',
   BNB: 'BNB', XRP: 'XRP', ADA: 'Cardano', AVAX: 'Avalanche', DOGE: 'Dogecoin',
+  // Fidelity 401k internal aliases for target-date funds
+  O24K:      'Vanguard Target 2060',
+  BLKLP2060: 'BlackRock LifePath 2060',
 }
 
 type ResolvedQuote = { price: number; change?: number; changePct?: number }

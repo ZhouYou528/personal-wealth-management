@@ -3,15 +3,19 @@ import { cn, fmtPct } from '@/lib/utils'
 import { useMoney } from '@/lib/money'
 
 interface ChangePillProps {
-  pct: number
-  abs?: number
+  pct: number | null | undefined
+  abs?: number | null
   size?: 'sm' | 'md'
 }
 
 export function ChangePill({ pct, abs, size = 'md' }: ChangePillProps) {
   const { fmt } = useMoney()
-  const positive = pct >= 0
+  const hasValue = pct != null && Number.isFinite(pct)
+  const positive = hasValue && (pct as number) >= 0
   const Icon = positive ? TrendingUp : TrendingDown
+  if (!hasValue) {
+    return <span className={cn('text-text-3', size === 'sm' ? 'text-[11.5px]' : 'text-[13px]')}>—</span>
+  }
 
   return (
     <span

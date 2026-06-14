@@ -570,6 +570,8 @@ export function Accounts() {
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
   const [refreshMsg, setRefreshMsg] = useState<{ accountId: string; text: string; tone: 'ok' | 'warn' } | null>(null)
+  const [syncingAll, setSyncingAll] = useState(false)
+  const [syncAllMsg, setSyncAllMsg] = useState<{ text: string; tone: 'ok' | 'warn' } | null>(null)
 
   const refreshOne = useCallback(async (acc: Account) => {
     if (refreshingId) return
@@ -621,6 +623,71 @@ export function Accounts() {
     queryKey: ['accounts'],
     queryFn: accountsApi.list,
   })
+
+  // Sync all live accounts: one IBKR Flex call (covers both IBKR accounts)
+  // + per-account SnapTrade calls for the rest. Runs sequentially to respect
+  // the 60s per-account debounce on both endpoints.
+  const refreshAll = useCallback(async () => {
+    if (syncingAll) return
+    setSyncingAll(true)
+    setSyncAllMsg(null)
+    setRefreshMsg(null)
+
+    const liveAccs = accs.filter(a => !!a.snaptrade_account_id || a.institution === 'Interactive Brokers')
+    const hasIbkr = liveAccs.some(a => a.institution === 'Interactive Brokers')
+    const snapAccs = liveAccs.filter(a => a.institution !== 'Interactive Brokers' && a.snaptrade_account_id)
+
+    let ok = 0
+    let warn = 0
+    const warnings: string[] = []
+
+    try {
+      if (hasIbkr) {
+        try {
+          const r = await ibkrFlexApi.sync()
+          if (r.rateLimited) {
+            warn++
+            warnings.push(`IBKR: wait ${r.retryAfter}s`)
+          } else {
+            ok++
+          }
+        } catch (e) {
+          warn++
+          warnings.push(`IBKR: ${String(e)}`)
+        }
+      }
+      for (const acc of snapAccs) {
+        try {
+          const r = await snapApi.syncAccount(acc.id)
+          if (r.rateLimited) {
+            warn++
+            warnings.push(`${acc.name}: wait ${r.retryAfter}s`)
+          } else {
+            ok++
+          }
+        } catch (e) {
+          warn++
+          warnings.push(`${acc.name}: ${String(e)}`)
+        }
+      }
+
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['holdings'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+
+      if (warn === 0) {
+        setSyncAllMsg({ tone: 'ok', text: `Synced ${ok} broker${ok === 1 ? '' : 's'}` })
+      } else {
+        setSyncAllMsg({
+          tone: 'warn',
+          text: `Synced ${ok}, ${warn} need attention · ${warnings.slice(0, 2).join(', ')}`,
+        })
+      }
+    } finally {
+      setSyncingAll(false)
+      setTimeout(() => setSyncAllMsg(null), 5000)
+    }
+  }, [accs, qc, syncingAll])
 
   // Keep local order in sync when server data arrives (only on first load / external change)
   useEffect(() => {
@@ -709,13 +776,34 @@ export function Accounts() {
 
   return (
     <div className="p-4 sm:p-8 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-2">
         <h1 className="text-page-title text-text">Accounts</h1>
-        <Button onClick={() => setAddOpen(true)}>
-          <Plus size={14} />
-          Add Account
-        </Button>
+        <div className="flex items-center gap-2">
+          {accs.some(a => !!a.snaptrade_account_id || a.institution === 'Interactive Brokers') && (
+            <Button
+              variant="outline"
+              onClick={refreshAll}
+              disabled={syncingAll || !!refreshingId}
+              title="Refresh positions, balances, and recent activities for every live-connected account"
+            >
+              <RefreshCw size={14} className={syncingAll ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{syncingAll ? 'Syncing…' : 'Sync all'}</span>
+            </Button>
+          )}
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus size={14} />
+            <span className="hidden sm:inline">Add Account</span>
+          </Button>
+        </div>
       </div>
+      {syncAllMsg && (
+        <div className={cn(
+          'mb-4 px-3 py-2 rounded-lg text-[12px] font-medium',
+          syncAllMsg.tone === 'ok' ? 'bg-up/10 text-up' : 'bg-warn/15 text-warn'
+        )}>
+          {syncAllMsg.text}
+        </div>
+      )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={orderedIds} strategy={rectSortingStrategy}>

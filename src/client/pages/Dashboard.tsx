@@ -6,7 +6,7 @@ import { Glyph } from '@/components/Glyph'
 import { holdings as holdingsApi, nav, accounts as accountsApi, admin, sentiment as sentimentApi } from '@/lib/api'
 import { STALE } from '@/lib/cache'
 import { useStore } from '@/lib/store'
-import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral } from '@/lib/utils'
+import { fmtDate, cn, todayISO, daysAgoISO, lockedCollateral, KIND_LABEL } from '@/lib/utils'
 import { useMoney } from '@/lib/money'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -243,7 +243,7 @@ function AllocationDonut({ holdings }: { holdings: Holding[] }) {
         .sort(([, a], [, b]) => b - a)
         .map(([kind, val], i) => ({
           key: kind,
-          label: kind.charAt(0).toUpperCase() + kind.slice(1),
+          label: KIND_LABEL[kind] ?? kind,
           val,
           color: KIND_COLOR[kind] ?? HOLDING_COLORS[i % HOLDING_COLORS.length],
         }))
@@ -384,10 +384,7 @@ function AccountsSummary({ accounts, holdings }: { accounts: Account[]; holdings
           </span>
           <div className="flex-1 min-w-0">
             <p className="text-small font-medium text-text leading-tight">{acc.name}</p>
-            <p className="text-[11px] text-text-3 truncate">
-              {acc.institution}
-              {acc.number ? ` · ${acc.number}` : ''}
-            </p>
+            <p className="text-[11px] text-text-3 truncate">{acc.institution}</p>
           </div>
           <div className="text-right flex-shrink-0">
             <p className="tabular text-small font-semibold text-text private-val">{fmt(acc.value)}</p>
@@ -480,11 +477,11 @@ export function Dashboard() {
   const chartColor = selectedPeriodChange.change >= 0 ? '#10B981' : '#EF4444'
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-3 sm:space-y-6 max-w-7xl mx-auto">
 
       {/* ── Account filter pills ──────────────────────────── */}
       {accountsList.length > 1 && (
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           <AccountFilterPill
             active={selectedAccountId == null}
             onClick={() => setSelectedAccountId(null)}
@@ -503,7 +500,7 @@ export function Dashboard() {
       )}
 
       {/* ── Hero card ──────────────────────────────────────── */}
-      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 pt-4 sm:pt-5 pb-4 sm:pb-5">
+      <div className="bg-surface rounded-2xl shadow-md dark:shadow-none border border-transparent dark:border-border card-mobile-flush px-4 sm:px-6 sm:pt-5 pb-4 sm:pb-5">
 
         {/* Top: title + range selector — stack on mobile */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
@@ -605,7 +602,7 @@ function AccountFilterPill({
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150',
+        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all duration-150 whitespace-nowrap flex-shrink-0',
         active
           ? 'bg-accent-soft text-accent'
           : 'bg-surface border border-border text-text-2 hover:text-text hover:border-border-strong'

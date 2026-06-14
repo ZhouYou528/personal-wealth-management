@@ -36,7 +36,18 @@ export async function updateAccount(db: D1Database, id: string, a: Partial<Omit<
 }
 
 export async function deleteAccount(db: D1Database, id: string): Promise<void> {
-  await db.prepare('DELETE FROM accounts WHERE id = ?').bind(id).run()
+  // Cascade clean: the account is the unit of broker connection, so removing
+  // it should remove everything broker-managed for it. Transactions go too —
+  // they're tied to this specific account, not portable. (Goals / allocation /
+  // recurring may reference the id in JSON arrays; those are handled at the
+  // app layer if/when they break.)
+  await db.batch([
+    db.prepare('DELETE FROM broker_positions WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM broker_balances  WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM transactions     WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM nav_snapshots    WHERE account_id = ?').bind(id),
+    db.prepare('DELETE FROM accounts         WHERE id = ?').bind(id),
+  ])
 }
 
 // ---------- Transactions ----------

@@ -142,20 +142,6 @@ app.post('/register', async (c) => {
   }
 })
 
-// ── Delete / reset ─────────────────────────────────────────────
-
-app.delete('/register', async (c) => {
-  const user = await getStoredUser(c.env.DB)
-  if (user) {
-    await client(c.env).deleteUser(user).catch(() => {})
-    await c.env.DB.prepare('DELETE FROM snaptrade_users WHERE id = ?').bind('singleton').run()
-    await c.env.DB
-      .prepare('UPDATE accounts SET snaptrade_account_id = NULL')
-      .run()
-  }
-  return c.json({ ok: true })
-})
-
 // ── Connect: get broker OAuth URL ─────────────────────────────
 
 app.post(

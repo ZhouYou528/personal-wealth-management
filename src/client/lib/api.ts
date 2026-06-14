@@ -230,9 +230,6 @@ export const snaptrade = {
       { method: 'POST', body: JSON.stringify({ accounts }) },
     ),
 
-  disconnect: () =>
-    request<{ ok: boolean }>('/snaptrade/register', { method: 'DELETE' }),
-
   // Unified sync: refreshes positions + balances + recent activities for one
   // SnapTrade-linked account. Subject to a 60s per-account debounce.
   // Returns `rateLimited: true` + `retryAfter` instead of throwing on 429.

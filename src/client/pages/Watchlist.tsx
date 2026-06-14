@@ -1,15 +1,30 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, ChevronUp, ChevronDown } from 'lucide-react'
+import { Trash2, ChevronUp, ChevronDown, Plus, AlertCircle } from 'lucide-react'
 import { watchlist as watchlistApi, market } from '@/lib/api'
 import { Glyph } from '@/components/Glyph'
 import { ChangePill } from '@/components/ChangePill'
 import { Button } from '@/components/ui/button'
 import { useMoney } from '@/lib/money'
 import { cn } from '@/lib/utils'
-import type { TickerSearchResult } from '@shared/types'
+import { isEtfSymbol } from '@shared/etf-list'
+import type { TickerSearchResult, AssetKind } from '@shared/types'
 
-type Quote = { price: number; changePct: number; change: number }
+const CRYPTO_TICKERS = new Set([
+  'BTC','ETH','SOL','BNB','XRP','ADA','AVAX','DOGE','DOT','MATIC','LINK','LTC','UNI','ATOM','SUI','SHIB','TRX','TON','NEAR','APT',
+])
+
+// Best-effort kind detection for a freeform ticker. Crypto first, then ETF
+// whitelist, then default to stock — wrong kind is harmless (only affects
+// which color the row's glyph uses on Holdings).
+function guessKind(symbol: string): AssetKind {
+  const up = symbol.toUpperCase()
+  if (CRYPTO_TICKERS.has(up)) return 'crypto'
+  if (isEtfSymbol(up)) return 'etf'
+  return 'stock'
+}
+
+type Quote = { price: number; changePct: number | null; change: number | null }
 type SortKey = 'symbol' | 'price' | 'changePct' | 'change'
 type Dir = 'asc' | 'desc'
 
@@ -37,7 +52,7 @@ const MOBILE_METRICS: MobileMetric[] = [
   {
     label: 'Change $',
     sortKey: 'change',
-    render: (q, fmt) => q
+    render: (q, fmt) => q?.change != null
       ? <span className={cn('tabular text-small private-val', q.change >= 0 ? 'text-up' : 'text-down')}>
           {q.change >= 0 ? '+' : ''}{fmt(q.change)}
         </span>
@@ -51,6 +66,8 @@ export function Watchlist() {
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<TickerSearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>('symbol')
   const [sortDir, setSortDir] = useState<Dir>('asc')
   const [mobileMetricIdx, setMobileMetricIdx] = useState(0)
@@ -73,9 +90,35 @@ export function Watchlist() {
     mutationFn: watchlistApi.add,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['watchlist'] })
-      setSearch(''); setResults([])
+      setSearch(''); setResults([]); setError(null)
     },
+    onError: (e) => setError(String(e)),
   })
+
+  // Validate by fetching a live quote; if the source (Finnhub/CoinGecko)
+  // returns a price, the ticker is real. Otherwise show an inline error.
+  async function tryAddByTicker(raw: string) {
+    const symbol = raw.trim().toUpperCase()
+    if (!symbol) return
+    if (symbols.includes(symbol)) {
+      setError(`${symbol} is already on your watchlist`)
+      return
+    }
+    setError(null)
+    setValidating(true)
+    try {
+      const { quotes: q } = await market.quotes([symbol])
+      if (q[symbol] && q[symbol].price > 0) {
+        addMutation.mutate({ symbol, name: symbol, kind: guessKind(symbol) })
+      } else {
+        setError(`Couldn't fetch a price for ${symbol}. Check the ticker and try again.`)
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setValidating(false)
+    }
+  }
 
   const removeMutation = useMutation({
     mutationFn: watchlistApi.remove,
@@ -84,6 +127,7 @@ export function Watchlist() {
 
   async function handleSearch(q: string) {
     setSearch(q)
+    setError(null)
     if (q.length < 1) { setResults([]); return }
     setSearching(true)
     try {
@@ -93,6 +137,18 @@ export function Watchlist() {
       setSearching(false)
     }
   }
+
+  // Show the "Add as typed" fallback when the search query is a plausible
+  // ticker (letters/digits/dot/dash, 1–10 chars) and no exact symbol match
+  // is already in the dropdown.
+  const canAddTyped = useMemo(() => {
+    const s = search.trim().toUpperCase()
+    if (!s) return false
+    if (!/^[A-Z0-9.\-]{1,10}$/.test(s)) return false
+    if (results.some(r => r.symbol.toUpperCase() === s)) return false
+    if (symbols.includes(s)) return false
+    return true
+  }, [search, results, symbols])
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -129,16 +185,22 @@ export function Watchlist() {
         <input
           value={search}
           onChange={e => handleSearch(e.target.value)}
-          placeholder="Search tickers to add…"
+          onKeyDown={e => {
+            if (e.key === 'Enter' && canAddTyped) {
+              e.preventDefault()
+              tryAddByTicker(search)
+            }
+          }}
+          placeholder="Enter any ticker (press Enter to add)…"
           className="w-full max-w-sm px-3 py-2 rounded-lg border border-border bg-surface text-text text-small placeholder:text-text-3 focus:outline-none focus:border-accent"
         />
-        {results.length > 0 && (
+        {(results.length > 0 || canAddTyped) && (
           <div className="absolute top-full left-0 mt-1 w-72 bg-surface border border-border rounded-xl shadow-lg z-10">
             {results.map(r => (
               <button
                 key={r.symbol}
                 onClick={() => addMutation.mutate({ symbol: r.symbol, name: r.name, kind: r.kind })}
-                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-2 text-left first:rounded-t-xl last:rounded-b-xl"
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-2 text-left first:rounded-t-xl"
               >
                 <Glyph symbol={r.symbol} kind={r.kind} size="sm" />
                 <div>
@@ -147,9 +209,36 @@ export function Watchlist() {
                 </div>
               </button>
             ))}
+            {canAddTyped && (
+              <button
+                onClick={() => tryAddByTicker(search)}
+                disabled={validating}
+                className={cn(
+                  'w-full flex items-center gap-2.5 px-3 py-2 hover:bg-surface-2 text-left last:rounded-b-xl disabled:opacity-50',
+                  results.length === 0 && 'first:rounded-t-xl',
+                  results.length > 0 && 'border-t border-border'
+                )}
+              >
+                <div className="w-6 h-6 rounded-full bg-accent-soft flex items-center justify-center flex-shrink-0">
+                  <Plus size={13} className="text-accent" />
+                </div>
+                <div>
+                  <p className="text-small font-medium text-text">
+                    {validating ? 'Validating…' : `Add ${search.trim().toUpperCase()}`}
+                  </p>
+                  <p className="text-[11px] text-text-3">Press Enter or click to verify ticker</p>
+                </div>
+              </button>
+            )}
           </div>
         )}
         {searching && <p className="mt-1 text-[11px] text-text-3">Searching…</p>}
+        {error && (
+          <p className="mt-2 flex items-center gap-1.5 text-[12px] text-down">
+            <AlertCircle size={12} />
+            {error}
+          </p>
+        )}
       </div>
 
       {/* ── Desktop table ─────────────────────────────────────── */}
@@ -185,7 +274,7 @@ export function Watchlist() {
                     {q ? <ChangePill pct={q.changePct} size="sm" /> : '—'}
                   </td>
                   <td className="px-4 py-3 tabular text-small">
-                    {q ? (
+                    {q?.change != null ? (
                       <span className={cn('private-val', q.change >= 0 ? 'text-up' : 'text-down')}>
                         {q.change >= 0 ? '+' : ''}{fmt(q.change)}
                       </span>

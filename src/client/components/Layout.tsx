@@ -272,17 +272,17 @@ export function Layout() {
               >
                 {privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
               </Button>
-            </div>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleExport}
-              title="Export to spreadsheet"
-              disabled={exporting}
-            >
-              <Download size={14} className={exporting ? 'animate-pulse' : ''} />
-            </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleExport}
+                title="Export to spreadsheet"
+                disabled={exporting}
+              >
+                <Download size={14} className={exporting ? 'animate-pulse' : ''} />
+              </Button>
+            </div>
 
             <Button
               size="sm"

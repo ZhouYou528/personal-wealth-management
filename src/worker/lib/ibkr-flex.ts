@@ -13,7 +13,7 @@
 
 import { XMLParser } from 'fast-xml-parser'
 import type { TxType } from '@shared/types'
-import { isEtfSymbol } from '../../shared/etf-list'
+import { isEtfSymbol, isMutualFundSymbol } from '../../shared/etf-list'
 
 const SUBMIT_URL = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest'
 
@@ -532,7 +532,7 @@ export async function persistFlexResults(
 function assetKindOf(cat: string | undefined, symbol?: string | null): string {
   const c = (cat ?? '').toUpperCase()
   if (c.includes('OPT')) return 'option'
-  if (c.includes('FUND')) return 'mutual_fund'
+  if (c.includes('FUND') || isMutualFundSymbol(symbol)) return 'mutual_fund'
   if (c.includes('CRYPTO')) return 'crypto'
   // IBKR's "CASH" asset class means forex / currency conversions
   // (e.g. USD.CAD pairs), NOT crypto.
